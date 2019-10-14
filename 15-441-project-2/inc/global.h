@@ -27,17 +27,17 @@ typedef struct {
 } window_t;
 
 typedef enum states{				//HJadded: enum states
-	CLOSED,
-    LISTEN,
-    SYN_SENT,
-    SYN_RECVD,
-    ESTABLISHED,
-	FIN_WAIT_1,
-	FIN_WAIT_2,
-	CLOSING,
-	TIME_WAIT,
-	CLOSE_WAIT,
-	LAST_ACK,
+	CLOSED,//0
+    LISTEN,//1
+    SYN_SENT,//2
+    SYN_RECVD,//3
+    ESTABLISHED,//4
+	FIN_WAIT_1,//5
+	FIN_WAIT_2,//6
+	CLOSING,//7
+	TIME_WAIT,//8
+	CLOSE_WAIT,//9
+	LAST_ACK,//10
 }states;
 
 typedef struct {
