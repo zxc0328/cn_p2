@@ -11,7 +11,7 @@ void send_SYN(cmu_socket_t * dst){                                             /
   dst->window.last_ack_received = ISN;
   pthread_mutex_unlock(&(dst->window.ack_lock));
   rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), ISN, 0, 
-    DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, ACK_FLAG_MASK, 1, 0, NULL, NULL, 0);
+    DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, SYN_FLAG_MASK, 1, 0, NULL, NULL, 0);
   sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
     &(dst->conn), sizeof(dst->conn));
   free(rsp);
@@ -43,6 +43,8 @@ void send_FIN(cmu_socket_t * dst){                                            //
   return;
 }
 
+
+/* reset function, not needed for CP1
 void reset_sock(cmu_socket_t * dst){                                          //HJadded: reset_sock()
   while(pthread_mutex_lock(&(dst->window.ack_lock)) != 0);
   dst->window.last_ack_received = 0;
@@ -65,6 +67,7 @@ void reset_sock(cmu_socket_t * dst){                                          //
   dst->FSN = 0;
   return;
 }
+*/
 
 /*
  * Param: sock - The socket to check for acknowledgements. 
@@ -349,7 +352,6 @@ void single_send(cmu_socket_t * sock, char* data, int buf_len){
 
 void handshake(cmu_socket_t * dst){                       //HJadd: handshake() to be used at the beginning of begin_backend()
   while(dst->state != ESTABLISHED){
-printf("handshake state: %d\n", dst->state);
     switch(dst->state){
       case CLOSED:
         send_SYN(dst);
@@ -366,27 +368,20 @@ printf("handshake state: %d\n", dst->state);
         break;
 
       case SYN_RECVD:
-        if(check_for_data(dst, NO_FLAG) != 0){
-          //send_RST(dst);
-          if(dst->type == TCP_LISTENER)
-            dst->state = LISTEN;
-          else
-            dst->state = CLOSED;
-          break;
-        }
-        dst->state = ESTABLISHED;
+        if(check_for_data(dst, NO_FLAG) != 0)
+          send_SYN(dst);
         break;
       
       default:
         break;
     }//end of switch statement
+    printf("handshake state: %d\n", dst->state);
   }//end of while loop
   return;
 }
 
 void teardown(cmu_socket_t * dst){                          //HJadded: teardown process to be used in back_end()
   while(dst->state != CLOSED){
-printf("teardown state: %d\n", dst->state);
     switch (dst->state)
     {
     case ESTABLISHED:
@@ -431,6 +426,7 @@ printf("teardown state: %d\n", dst->state);
     default:
       break;
     }//end of switch statement
+printf("teardown state: %d\n", dst->state);
   }//end of while loop
   return;
 }
