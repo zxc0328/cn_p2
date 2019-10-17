@@ -45,6 +45,7 @@ int main(int argc, char **argv) {
     if (serverip) ;
     else {
         serverip = "10.0.0.1";
+
     }
 
     serverport = getenv("serverport15441");
