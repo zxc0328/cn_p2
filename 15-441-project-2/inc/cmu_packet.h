@@ -39,7 +39,6 @@ typedef struct {
 #define SYN_FLAG_MASK 0x8
 #define ACK_FLAG_MASK 0x4
 #define FIN_FLAG_MASK 0x2
-#define RST_FLAG_MASK 0x1			//HJadded: RST flag mask
 #define IDENTIFIER 15441
 #define DEFAULT_HEADER_LEN 25
 

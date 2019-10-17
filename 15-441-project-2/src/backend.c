@@ -1,6 +1,6 @@
 #include "backend.h"
 #include <stdlib.h>                   //HJadded: stdlib.h for rand() in send_SYN()
-
+#include <time.h>                     //HJdebug: added time.h
 
 void send_SYN(cmu_socket_t * dst){                                             //HJadded: send_SYN() *all sending of individual flag can be rewritten to switch
   uint32_t ISN;
@@ -27,6 +27,21 @@ void send_ACK(cmu_socket_t * dst){                                            //
     &(dst->conn), sizeof(dst->conn));
   free(rsp);
   return;
+}
+
+//only used by listener when in SYN_RECVD state and failed to receive ack of syn/ack
+void resend_SYNACK(cmu_socket_t * sock){                                         //HJcp1: added resend_SYNACK()
+  char* rsp;
+  uint32_t seq, ack;                                                  
+  socklen_t conn_len = sizeof(sock->conn);
+  seq = sock->ISN;
+  ack = sock->window.last_seq_received  + 1;
+  rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, ack, 
+    DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, SYN_FLAG_MASK|ACK_FLAG_MASK, 1, 0, NULL, NULL, 0);
+  sendto(sock->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
+    &(sock->conn), conn_len);
+  free(rsp);
+  sock->state = SYN_RECVD;
 }
 
 void send_FIN(cmu_socket_t * dst){                                            //HJadded: send_FIN()
@@ -104,18 +119,15 @@ void handle_message(cmu_socket_t * sock, char* pkt){
   socklen_t conn_len = sizeof(sock->conn);
   switch(flags){                                                                 //HJadded: more flags: syn, syn_ack, fin, fin_ack
     case SYN_FLAG_MASK:
-      if(sock->state != LISTEN && sock->state != SYN_SENT)
+      if(sock->state != LISTEN && sock->state != SYN_RECVD)
         break;
 
-      if(sock->state == LISTEN){
-        seq = rand() % SEQMAX;
-        sock->ISN = seq;
-        while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
-        sock->window.last_ack_received = seq;
-        pthread_mutex_unlock(&(sock->window.ack_lock));
-      }
-      else
-        seq = sock->ISN;
+      seq = rand() % SEQMAX;
+      sock->ISN = seq;
+      while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
+      sock->window.last_ack_received = seq;
+      pthread_mutex_unlock(&(sock->window.ack_lock));
+      
       
       sock->window.last_seq_received = get_seq(pkt);
       ack = get_seq(pkt) + 1;
@@ -128,7 +140,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       break;
 
     case SYN_FLAG_MASK|ACK_FLAG_MASK:                                 //what if SYN+ACK is received but ack number is wrong?
-      if(sock->state != SYN_SENT || get_ack(pkt) != sock->ISN + 1)
+      if((sock->state != SYN_SENT && sock->state != ESTABLISHED) || get_ack(pkt) != sock->ISN + 1)
         break;
 
       sock->window.last_seq_received = get_seq(pkt);
@@ -161,8 +173,9 @@ void handle_message(cmu_socket_t * sock, char* pkt){
           send_ACK(sock);
           sock->state = TIME_WAIT;
           break;
-
+        case CLOSE_WAIT:
         case TIME_WAIT:
+        case CLOSING:
           send_ACK(sock);
           break;
         
@@ -173,14 +186,27 @@ void handle_message(cmu_socket_t * sock, char* pkt){
 
     case FIN_FLAG_MASK|ACK_FLAG_MASK:
       if(get_ack(pkt) == sock->FSN + 1){
-        if(sock->state == FIN_WAIT_1){
-          sock->window.last_seq_received = get_seq(pkt);
-          while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
-          sock->window.last_ack_received = get_ack(pkt);
-          pthread_mutex_unlock(&(sock->window.ack_lock));
-          send_ACK(sock);
-          sock->state = TIME_WAIT;
+        switch (sock->state){
+          case FIN_WAIT_1:
+            sock->window.last_seq_received = get_seq(pkt);
+            while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
+            sock->window.last_ack_received = get_ack(pkt);
+            pthread_mutex_unlock(&(sock->window.ack_lock));
+            send_ACK(sock);
+            sock->state = TIME_WAIT;
+            break;
+
+          case CLOSING:
+            send_ACK(sock);
+            break;
+
+          default:
+            break;
         }
+        if(sock->state == FIN_WAIT_1){
+          
+        }
+        
       }
       break;
 /*
@@ -220,12 +246,15 @@ void handle_message(cmu_socket_t * sock, char* pkt){
         }
       }
       if(get_ack(pkt) == sock->ISN + 1){
-        if(sock->state == SYN_RECVD)
+        if(sock->state == SYN_RECVD){
           sock->state = ESTABLISHED;
+        }
       }
       break;
 
     default:
+      if(sock->state != ESTABLISHED && sock->state != FIN_WAIT_1 && sock->state != FIN_WAIT_2 && sock->state != CLOSING)
+        break;
       seq = get_seq(pkt);
       rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, seq+1, 
         DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, ACK_FLAG_MASK, 1, 0, NULL, NULL, 0);
@@ -266,8 +295,8 @@ int check_for_data(cmu_socket_t * sock, int flags){               //HJadded: cha
   uint32_t plen = 0, buf_size = 0, n = 0;
   fd_set ackFD;
   struct timeval time_out;
-  time_out.tv_sec = 3;
-  time_out.tv_usec = 0;
+  time_out.tv_sec = 0;
+  time_out.tv_usec = 100000;
 
 
   while(pthread_mutex_lock(&(sock->recv_lock)) != 0);
@@ -280,6 +309,7 @@ int check_for_data(cmu_socket_t * sock, int flags){               //HJadded: cha
       FD_ZERO(&ackFD);
       FD_SET(sock->socket, &ackFD);
       if(select(sock->socket+1, &ackFD, NULL, NULL, &time_out) <= 0){
+        pthread_mutex_unlock(&(sock->recv_lock));
         return EXIT_TIMEOUT;
       }
     case NO_WAIT:
@@ -350,8 +380,49 @@ void single_send(cmu_socket_t * sock, char* data, int buf_len){
     }
 }
 
+
+void print_state(cmu_socket_t *dst){
+  switch(dst->state){
+    case CLOSED:
+      printf("state: CLOSED\n");
+      break;
+    case LISTEN:
+      printf("state: LISTEN\n");
+      break;
+    case SYN_SENT:
+      printf("state: SYN_SENT\n");
+      break;
+    case SYN_RECVD:
+      printf("state: SYN_RECVD\n");
+      break;
+    case ESTABLISHED:
+      printf("state: ESTABLISHED\n");
+      break;
+    case FIN_WAIT_1:
+      printf("state: FIN_WAIT_1\n");
+      break;
+    case FIN_WAIT_2:
+      printf("state: FIN_WAIT_2\n");
+      break;
+    case CLOSING:
+      printf("state: CLOSING\n");
+      break;
+    case TIME_WAIT:
+      printf("state: TIME_WAIT\n");
+      break;
+    case CLOSE_WAIT:
+      printf("state: CLOSE_WAIT\n");
+      break;
+    case LAST_ACK:
+      printf("state: LAST_ACK\n");
+      break;
+  }
+}
+
+
 void handshake(cmu_socket_t * dst){                       //HJadd: handshake() to be used at the beginning of begin_backend()
   while(dst->state != ESTABLISHED){
+printf("starting ");print_state(dst);
     switch(dst->state){
       case CLOSED:
         send_SYN(dst);
@@ -359,8 +430,15 @@ void handshake(cmu_socket_t * dst){                       //HJadd: handshake() t
         break;
       
       case SYN_SENT:
-        if(check_for_data(dst, TIMEOUT) != 0 )
-          send_SYN(dst);        
+        if(check_for_data(dst, TIMEOUT) != 0 ){
+          send_SYN(dst);
+        }else{
+          if(dst->state == SYN_SENT){
+            send_SYN(dst);
+          }
+
+        }
+
         break;
       
       case LISTEN:
@@ -368,19 +446,24 @@ void handshake(cmu_socket_t * dst){                       //HJadd: handshake() t
         break;
 
       case SYN_RECVD:
-        if(check_for_data(dst, NO_FLAG) != 0)
-          send_SYN(dst);
+        if(check_for_data(dst, TIMEOUT) != 0){
+          resend_SYNACK(dst);
+        }else{
+          if(dst->state == SYN_RECVD)
+          resend_SYNACK(dst);
+        }
         break;
       
       default:
         break;
     }//end of switch statement
-    printf("handshake state: %d\n", dst->state);
+printf("ending ");print_state(dst);
   }//end of while loop
   return;
 }
 
 void teardown(cmu_socket_t * dst){                          //HJadded: teardown process to be used in back_end()
+  
   while(dst->state != CLOSED){
     switch (dst->state)
     {
@@ -426,10 +509,12 @@ void teardown(cmu_socket_t * dst){                          //HJadded: teardown 
     default:
       break;
     }//end of switch statement
-printf("teardown state: %d\n", dst->state);
+print_state(dst);
   }//end of while loop
   return;
 }
+
+
 
 /*
  * Param: in - the socket that is used for backend processing
@@ -443,6 +528,8 @@ void* begin_backend(void * in){
   int death, buf_len, send_signal;
   char* data;
 
+  srand(time(NULL));
+print_state(dst);
   handshake(dst);                                 //HJadded: execute handshake process, which loops until ESTABLISHED state is reached
 
   while(TRUE){
