@@ -25,6 +25,17 @@ void send_SYN(cmu_socket_t * dst){                                             /
   return;
 }
 
+void resend_SYN(cmu_socket_t * dst){                                             
+  char *rsp;
+
+  rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), dst->ISN, 0, 
+    DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, SYN_FLAG_MASK, 1, 0, NULL, NULL, 0);
+  sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
+    &(dst->conn), sizeof(dst->conn));
+  free(rsp);
+  return;
+}
+
 void send_ACK(cmu_socket_t * dst){                                            //HJadded: send_ACK()
   char *rsp;
   rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), 
@@ -132,8 +143,14 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       if(sock->state != LISTEN && sock->state != SYN_RECVD)
         break;
 
-      seq = rand() % SEQMAX;
-      sock->ISN = seq;
+      //define seq: first time ISN = rand(), otherwise seq = sock->ISN
+      if(sock->state == LISTEN){
+        seq = rand() % SEQMAX;
+        sock->ISN = seq;
+      }else{
+        seq = sock->ISN;
+      }
+
       while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
       sock->window.last_ack_received = seq;
       pthread_mutex_unlock(&(sock->window.ack_lock));
@@ -642,10 +659,10 @@ printf("starting ");print_state(dst);
       case SYN_SENT:
 
         if(check_for_data(dst, TIMEOUT, current_timeout) != 0 ){
-          send_SYN(dst);
+          resend_SYN(dst);
         }else{
           if(dst->state == SYN_SENT){
-            send_SYN(dst);
+            resend_SYN(dst);
           }
         }
         break;
