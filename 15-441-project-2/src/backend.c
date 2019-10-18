@@ -3,7 +3,7 @@
 
 #include <time.h>                     //HJdebug: added time.h
 
-
+void print_state(cmu_socket_t *dst);
 // initial  value
 double EstimatedRTT = INIT_RTT; // set init EstimatedRTT
 double current_timeout = INIT_TIMEOUT;// set inital timeout value
@@ -60,7 +60,7 @@ void send_FIN(cmu_socket_t * dst){                                            //
   pthread_mutex_unlock(&(dst->window.ack_lock));
   rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), 
   dst->FSN, dst->window.last_seq_received + 1, 
-  DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, FIN_FLAG_MASK, 1, 0, NULL, NULL, 0);
+  DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, FIN_FLAG_MASK|ACK_FLAG_MASK, 1, 0, NULL, NULL, 0);
   sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
     &(dst->conn), sizeof(dst->conn));
   free(rsp);
@@ -138,7 +138,6 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       sock->window.last_ack_received = seq;
       pthread_mutex_unlock(&(sock->window.ack_lock));
 
-      
       sock->window.last_seq_received = get_seq(pkt);
       ack = get_seq(pkt) + 1;
       rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, ack, 
@@ -163,43 +162,10 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       sock->state = ESTABLISHED;
       break;
     
-    case FIN_FLAG_MASK:
-      switch(sock->state){
-        case ESTABLISHED:
-          sock->window.last_seq_received = get_seq(pkt);
-          send_ACK(sock);
-          sock->state = CLOSE_WAIT;
-          while(pthread_mutex_lock(&(sock->death_lock)) !=  0);
-          sock->dying = TRUE;
-          pthread_mutex_unlock(&(sock->death_lock));
-          break;
-
-        case FIN_WAIT_1:
-          sock->window.last_seq_received = get_seq(pkt);
-          send_ACK(sock);
-          sock->state = CLOSING;
-          break;
-
-        case FIN_WAIT_2:
-          sock->window.last_seq_received = get_seq(pkt);
-          send_ACK(sock);
-          sock->state = TIME_WAIT;
-          break;
-
-        case CLOSE_WAIT:
-        case TIME_WAIT:
-        case CLOSING:
-
-          send_ACK(sock);
-          break;
-        
-        default:
-          break;
-      }
-      break;
-
     case FIN_FLAG_MASK|ACK_FLAG_MASK:
-      if(get_ack(pkt) == sock->FSN + 1){
+printf("backend.c: handlemsg(): pkt ack is: %u, my FSN+1 is: %u, my state is", get_ack(pkt), sock->FSN + 1);print_state(sock);
+      if(get_ack(pkt) == sock->FSN + 1){//FIN/ACK
+  printf("backend.c: handle msg(): I reced a FIN|ACK\n");
 
         switch (sock->state){
           case FIN_WAIT_1:
@@ -211,6 +177,13 @@ void handle_message(cmu_socket_t * sock, char* pkt){
             sock->state = TIME_WAIT;
             break;
 
+          case FIN_WAIT_2:
+            sock->window.last_seq_received = get_seq(pkt);
+            send_ACK(sock);
+            sock->state = TIME_WAIT;
+            break;
+
+          case TIME_WAIT:
           case CLOSING:
             send_ACK(sock);
             break;
@@ -218,32 +191,69 @@ void handle_message(cmu_socket_t * sock, char* pkt){
           default:
             break;
         }
-        if(sock->state == FIN_WAIT_1){
-          
-        }
-        
+      }else{//normal FIN
+        switch(sock->state){
+          case ESTABLISHED:
+            sock->window.last_seq_received = get_seq(pkt);
+            send_ACK(sock);
+            sock->state = CLOSE_WAIT;
+            while(pthread_mutex_lock(&(sock->death_lock)) !=  0);
+            sock->dying = TRUE;
+            pthread_mutex_unlock(&(sock->death_lock));
+            break;
 
+          case FIN_WAIT_1:
+            sock->window.last_seq_received = get_seq(pkt);
+            send_ACK(sock);
+            sock->state = CLOSING;
+            break;
+
+          case CLOSE_WAIT:
+          case CLOSING:
+            send_ACK(sock);
+            break;
+          
+          default:
+            break;
+        }//end of else switch
       }
       break;
-/*
-    case RST_FLAG_MASK:
-      if(get_seq(pkt) > sock->window.last_seq_received){
-        if(sock->type == TCP_INITATOR)
-          sock->state = CLOSED;
-        else
-          sock->state = LISTEN;
-        reset_sock(sock);
-      }
-      break;
-*/
+
     case ACK_FLAG_MASK:                                             //HJadded: edited behavior to respond to specialized ACK flag 
       if(get_ack(pkt) > sock->window.last_ack_received){
-        while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
-        sock->window.last_ack_received = get_ack(pkt);
-        pthread_mutex_unlock(&(sock->window.ack_lock));
+          while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
+          sock->window.last_ack_received = get_ack(pkt);
+          pthread_mutex_unlock(&(sock->window.ack_lock));
+        }
+      if(get_plen(pkt) == get_hlen(pkt)){//just an ACK, if data+ACK, go to default
+        if(get_ack(pkt) == sock->FSN + 1)
+        {
+          switch(sock->state){
+            case FIN_WAIT_1:
+              sock->state = FIN_WAIT_2;
+              break;
+
+            case CLOSING:
+              sock->state = TIME_WAIT;
+              break;
+            
+            case LAST_ACK:
+              sock->state = CLOSED;
+              break;
+            
+            default:
+              break;
+          }
+        }
+        if(get_ack(pkt) == sock->ISN + 1){
+          if(sock->state == SYN_RECVD){
+            sock->state = ESTABLISHED;
+          }
+        }
+        break;
       }
-      if(get_ack(pkt) == sock->FSN + 1)
-      {
+    default:
+      if(get_ack(pkt) == sock->FSN + 1){
         switch(sock->state){
           case FIN_WAIT_1:
             sock->state = FIN_WAIT_2;
@@ -253,34 +263,26 @@ void handle_message(cmu_socket_t * sock, char* pkt){
             sock->state = TIME_WAIT;
             break;
           
-          case LAST_ACK:
-            sock->state = CLOSED;
-            break;
-          
           default:
             break;
         }
       }
-      if(get_ack(pkt) == sock->ISN + 1){
-        if(sock->state == SYN_RECVD){
+      else if(get_ack(pkt) == sock->ISN + 1){
+        if(sock->state == SYN_RECVD)
           sock->state = ESTABLISHED;
-        }
       }
-      break;
 
-    default:
-      if(sock->state != ESTABLISHED && sock->state != FIN_WAIT_1 && sock->state != FIN_WAIT_2 && sock->state != CLOSING)
+      if(sock->state != ESTABLISHED && sock->state != FIN_WAIT_1 && sock->state != FIN_WAIT_2 && sock->state != CLOSING && sock->state != TIME_WAIT)
         break;
 
-      seq = get_seq(pkt);
-      rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, seq+1, 
+      
+      rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), get_ack(pkt), get_seq(pkt) + 1, 
         DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, ACK_FLAG_MASK, 1, 0, NULL, NULL, 0);
       sendto(sock->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
         &(sock->conn), conn_len);
       free(rsp);
-
-      if(seq > sock->window.last_seq_received){                  //HJadded: deleted OR condition: || (seq == 0 && sock->window.last_seq_received == 0)
-        
+      seq = get_seq(pkt);
+      if( seq > sock->window.last_seq_received){                  //HJadded: deleted OR condition: || (seq == 0 && sock->window.last_seq_received == 0)
         sock->window.last_seq_received = seq;
         data_len = get_plen(pkt) - DEFAULT_HEADER_LEN;
         if(sock->received_buf == NULL){
@@ -506,16 +508,17 @@ void single_send(cmu_socket_t * sock, char* data, int buf_len){
     if(buf_len > 0){
       while(buf_len != 0){
         seq = sock->window.last_ack_received;
+  printf("backend.c: singlesend(): window.last.seq is: %u, window.last.ack is: %u\n", sock->window.last_seq_received, sock->window.last_ack_received);
         if(buf_len <= MAX_DLEN){
             plen = DEFAULT_HEADER_LEN + buf_len;
-            msg = create_packet_buf(sock->my_port, sock->their_port, seq, seq, 
-              DEFAULT_HEADER_LEN, plen, NO_FLAG, 1, 0, NULL, data_offset, buf_len);
+            msg = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, sock->window.last_seq_received + 1, 
+              DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, 1, 0, NULL, data_offset, buf_len);
             buf_len = 0;
           }
           else{
             plen = DEFAULT_HEADER_LEN + MAX_DLEN;
-            msg = create_packet_buf(sock->my_port, sock->their_port, seq, seq, 
-              DEFAULT_HEADER_LEN, plen, NO_FLAG, 1, 0, NULL, data_offset, MAX_DLEN);
+            msg = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, sock->window.last_seq_received + 1, 
+              DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, 1, 0, NULL, data_offset, MAX_DLEN);
             buf_len -= MAX_DLEN;
           }
 
@@ -534,7 +537,7 @@ void single_send(cmu_socket_t * sock, char* data, int buf_len){
           //waiting reply for (temp_timeout - used_time) seconds 
           //(note: any packet, even is not ack, can make check_for_data return,
           // return does not mean we get ack)
-          check_for_data_m(sock, TIMEOUT, temp_timeout - used_time);
+          check_for_data(sock, TIMEOUT, temp_timeout - used_time);
         
           // if last_ack_received > seq, it means data is acked
           if(check_ack(sock, seq)){
@@ -569,7 +572,7 @@ void single_send(cmu_socket_t * sock, char* data, int buf_len){
               gettimeofday(&start, NULL);
 
               // Karn  Algorithm
-              current_timeout = current_timeout*2;
+              //current_timeout = current_timeout*2;
 
               temp_timeout = current_timeout;
               used_time = 0.0;
@@ -638,23 +641,21 @@ printf("starting ");print_state(dst);
       
       case SYN_SENT:
 
-        if(check_for_data(dst, TIMEOUT) != 0 ){
+        if(check_for_data(dst, TIMEOUT, current_timeout) != 0 ){
           send_SYN(dst);
         }else{
           if(dst->state == SYN_SENT){
             send_SYN(dst);
           }
-
         }
-
         break;
       
       case LISTEN:
-        check_for_data(dst, NO_FLAG);
+        check_for_data(dst, NO_FLAG, current_timeout);
         break;
 
       case SYN_RECVD:
-        if(check_for_data(dst, TIMEOUT) != 0){
+        if(check_for_data(dst, TIMEOUT, current_timeout) != 0){
           resend_SYNACK(dst);
         }else{
           if(dst->state == SYN_RECVD)
@@ -702,7 +703,7 @@ void teardown(cmu_socket_t * dst){                          //HJadded: teardown 
 
     case TIME_WAIT:                                       //what is the value of 2xMSL?
 
-      if(check_for_data(dst, TIMEOUT, current_timeout) == EXIT_TIMEOUT)
+      if(check_for_data(dst, TIMEOUT, 2 * MAX_SEG_LIFE) == EXIT_TIMEOUT)
         dst->state = CLOSED;
       break;
     
@@ -714,7 +715,15 @@ void teardown(cmu_socket_t * dst){                          //HJadded: teardown 
     case LAST_ACK:
 
       if(check_for_data(dst, TIMEOUT, current_timeout) != EXIT_SUCCESS)//what to do if timeout here? current answer: resend FIN
+      {
         send_FIN(dst);
+printf("backend.c: teardown(): resent FIN\n");
+      }else
+      {
+        if(dst->state == LAST_ACK)
+          send_FIN(dst);
+      }
+      
       break;
     
     case SYN_RECVD:
