@@ -572,7 +572,7 @@ void single_send(cmu_socket_t * sock, char* data, int buf_len){
               gettimeofday(&start, NULL);
 
               // Karn  Algorithm
-              //current_timeout = current_timeout*2;
+              current_timeout = current_timeout*2;
 
               temp_timeout = current_timeout;
               used_time = 0.0;
