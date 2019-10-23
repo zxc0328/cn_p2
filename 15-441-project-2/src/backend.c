@@ -1,15 +1,17 @@
 #include "backend.h"
 #include <stdlib.h>                   //HJadded: stdlib.h for rand() in send_SYN()
-
 #include <time.h>                     //HJdebug: added time.h
 
-void print_state(cmu_socket_t *dst);
+
 // initial  value
 double EstimatedRTT = INIT_RTT; // set init EstimatedRTT
 double current_timeout = INIT_TIMEOUT;// set inital timeout value
 
+// debug: debugging function to print current state of a socket(body in backend.c)
+void print_state(cmu_socket_t *dst);
 
-void send_SYN(cmu_socket_t * dst){                                             //HJadded: send_SYN() *all sending of individual flag can be rewritten to switch
+// send a SYN packet: rand() an ISN and writes it to socket
+void send_SYN(cmu_socket_t * dst){                                             
   uint32_t ISN;
   char *rsp;
   ISN = rand() % SEQMAX;
@@ -25,9 +27,9 @@ void send_SYN(cmu_socket_t * dst){                                             /
   return;
 }
 
+// resend a SYN packet: reads the ISN on socket
 void resend_SYN(cmu_socket_t * dst){                                             
   char *rsp;
-
   rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), dst->ISN, 0, 
     DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, SYN_FLAG_MASK, 1, 0, NULL, NULL, 0);
   sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
@@ -36,7 +38,8 @@ void resend_SYN(cmu_socket_t * dst){
   return;
 }
 
-void send_ACK(cmu_socket_t * dst){                                            //HJadded: send_ACK()
+// send an ACK packet: reads from the socket's window
+void send_ACK(cmu_socket_t * dst){                                           
   char *rsp;
   rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), 
   dst->window.last_ack_received, dst->window.last_seq_received + 1, 
@@ -48,8 +51,9 @@ void send_ACK(cmu_socket_t * dst){                                            //
 }
 
 
-//only used by listener when in SYN_RECVD state and failed to receive ack of syn/ack
-void resend_SYNACK(cmu_socket_t * sock){                                         //HJcp1: added resend_SYNACK()
+// only used by listener when in SYN_RECVD state and failed to receive ack of SYN|ACK
+// it reads from socket's window
+void resend_SYNACK(cmu_socket_t * sock){                                         
   char* rsp;
   uint32_t seq, ack;                                                  
   socklen_t conn_len = sizeof(sock->conn);
@@ -63,8 +67,8 @@ void resend_SYNACK(cmu_socket_t * sock){                                        
   sock->state = SYN_RECVD;
 }
 
-
-void send_FIN(cmu_socket_t * dst){                                            //HJadded: send_FIN()
+// send a FIN|ACK packet, writes the FSN to socket's window
+void send_FIN(cmu_socket_t * dst){                                           
   char *rsp;
   while(pthread_mutex_lock(&(dst->window.ack_lock)) != 0);
   dst->FSN = dst->window.last_ack_received;
@@ -77,32 +81,6 @@ void send_FIN(cmu_socket_t * dst){                                            //
   free(rsp);
   return;
 }
-
-
-/* reset function, not needed for CP1
-void reset_sock(cmu_socket_t * dst){                                          //HJadded: reset_sock()
-  while(pthread_mutex_lock(&(dst->window.ack_lock)) != 0);
-  dst->window.last_ack_received = 0;
-  pthread_mutex_unlock(&(dst->window.ack_lock));
-  dst->window.last_seq_received = 0;
-  while(pthread_mutex_lock(&(dst->recv_lock)) != 0);
-  free(dst->received_buf);
-  dst->received_buf = NULL;
-  dst->received_len = 0;
-  pthread_mutex_unlock(&(dst->recv_lock));
-  while(pthread_mutex_lock(&(dst->send_lock)) != 0);
-  free(dst->sending_buf);
-  dst->sending_buf = NULL;
-  dst->sending_len = 0;
-  pthread_mutex_unlock(&(dst->send_lock));
-  while(pthread_mutex_lock(&(dst->death_lock)) != 0);
-  dst->dying = FALSE;
-  pthread_mutex_unlock(&(dst->death_lock));
-  dst->ISN = 0;
-  dst->FSN = 0;
-  return;
-}
-*/
 
 /*
  * Param: sock - The socket to check for acknowledgements. 
@@ -397,104 +375,6 @@ double diff(struct timeval start,struct timeval end)
 }
 
 
-// add timeout as input value to do adaptive retransmission 
-void check_for_data_m(cmu_socket_t * sock, int flags, double timeout_value){
-  char hdr[DEFAULT_HEADER_LEN];
-  char* pkt;
-  socklen_t conn_len = sizeof(sock->conn);
-  ssize_t len = 0;
-  uint32_t plen = 0, buf_size = 0, n = 0;
-  fd_set ackFD;
-  // only useful if falgs=TIMOUT
-  struct timeval time_out;
-  // transform double to tv_sec and tv_usec
-  int intpart = (int)timeout_value;
-  double decpart = timeout_value - intpart;
-  time_out.tv_sec = (long)intpart;
-  time_out.tv_usec = (long)(decpart*1000000);
-  // sec to usec, multiply 1000000, ex: 0.5 sec => 500000 usec
-
-  while(pthread_mutex_lock(&(sock->recv_lock)) != 0);
-  switch(flags){
-    case NO_FLAG:
-      len = recvfrom(sock->socket, hdr, DEFAULT_HEADER_LEN, MSG_PEEK,
-                (struct sockaddr *) &(sock->conn), &conn_len);
-      break;
-    case TIMEOUT:
-      printf("timeout: %lu sec : %lu usec \n", time_out.tv_sec,time_out.tv_usec);
-      FD_ZERO(&ackFD);
-      FD_SET(sock->socket, &ackFD);
-      if(select(sock->socket+1, &ackFD, NULL, NULL, &time_out) <= 0){
-        break;
-      }
-    case NO_WAIT:
-      len = recvfrom(sock->socket, hdr, DEFAULT_HEADER_LEN, MSG_DONTWAIT | MSG_PEEK,
-               (struct sockaddr *) &(sock->conn), &conn_len);
-      break;
-    default:
-      perror("ERROR unknown flag");
-  }
-  if(len >= DEFAULT_HEADER_LEN){
-    plen = get_plen(hdr);
-    pkt = malloc(plen);
-    while(buf_size < plen ){
-        n = recvfrom(sock->socket, pkt + buf_size, plen - buf_size, 
-          NO_FLAG, (struct sockaddr *) &(sock->conn), &conn_len);
-      buf_size = buf_size + n;
-    }
-    handle_message(sock, pkt);
-    free(pkt);
-  }
-  pthread_mutex_unlock(&(sock->recv_lock));
-}
-
-/*
- * Param: sock - The socket to use for sending data
- * Param: data - The data to be sent
- * Param: buf_len - the length of the data being sent
- *
- * Purpose: Breaks up the data into packets and sends a single 
- *  packet at a time.
- *
- * Comment: This will need to be updated for checkpoints 1,2,3
- *
- */
-// void single_send_old(cmu_socket_t * sock, char* data, int buf_len){
-//     char* msg;
-//     char* data_offset = data;
-//     int sockfd, plen;
-//     size_t conn_len = sizeof(sock->conn);
-//     uint32_t seq;
-
-//     sockfd = sock->socket; 
-//     if(buf_len > 0){
-//       while(buf_len != 0){
-//         seq = sock->window.last_ack_received;
-//         if(buf_len <= MAX_DLEN){
-//             plen = DEFAULT_HEADER_LEN + buf_len;
-//             msg = create_packet_buf(sock->my_port, sock->their_port, seq, seq, 
-//               DEFAULT_HEADER_LEN, plen, NO_FLAG, 1, 0, NULL, data_offset, buf_len);
-//             buf_len = 0;
-//           }
-//           else{
-//             plen = DEFAULT_HEADER_LEN + MAX_DLEN;
-//             msg = create_packet_buf(sock->my_port, sock->their_port, seq, seq, 
-//               DEFAULT_HEADER_LEN, plen, NO_FLAG, 1, 0, NULL, data_offset, MAX_DLEN);
-//             buf_len -= MAX_DLEN;
-//           }
-//         while(TRUE){
-//           sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
-//           check_for_data(sock, TIMEOUT);
-//           if(check_ack(sock, seq))
-//             break;
-//         }
-//         data_offset = data_offset + plen - DEFAULT_HEADER_LEN;
-//       }
-//     }
-// }
-
-
-
 /*
  * Param: sock - The socket to use for sending data
  * Param: data - The data to be sent
@@ -645,8 +525,8 @@ void print_state(cmu_socket_t *dst){
   }
 }
 
-
-void handshake(cmu_socket_t * dst){                       //HJadd: handshake() to be used at the beginning of begin_backend()
+// handshake()
+void handshake(cmu_socket_t * dst){                      
   while(dst->state != ESTABLISHED){
 printf("starting ");print_state(dst);
 
@@ -691,7 +571,8 @@ printf("ending ");print_state(dst);
   return;
 }
 
-void teardown(cmu_socket_t * dst){                          //HJadded: teardown process to be used in back_end()
+//teardown process for backend()
+void teardown(cmu_socket_t * dst){                         
 
   while(dst->state != CLOSED){
     switch (dst->state)
@@ -702,14 +583,12 @@ void teardown(cmu_socket_t * dst){                          //HJadded: teardown 
       break;
 
     case FIN_WAIT_1:
-
       if(check_for_data(dst, TIMEOUT, current_timeout) != EXIT_SUCCESS)//what to do if timeout here? current answer: resend FIN
 
         send_FIN(dst);
       break;
 
     case FIN_WAIT_2:
-
       check_for_data(dst, NO_WAIT, current_timeout);
       break;
 
@@ -719,7 +598,6 @@ void teardown(cmu_socket_t * dst){                          //HJadded: teardown 
       break;
 
     case TIME_WAIT:                                       //what is the value of 2xMSL?
-
       if(check_for_data(dst, TIMEOUT, 2 * MAX_SEG_LIFE) == EXIT_TIMEOUT)
         dst->state = CLOSED;
       break;
@@ -730,7 +608,6 @@ void teardown(cmu_socket_t * dst){                          //HJadded: teardown 
       break;
 
     case LAST_ACK:
-
       if(check_for_data(dst, TIMEOUT, current_timeout) != EXIT_SUCCESS)//what to do if timeout here? current answer: resend FIN
       {
         send_FIN(dst);
@@ -740,7 +617,6 @@ printf("backend.c: teardown(): resent FIN\n");
         if(dst->state == LAST_ACK)
           send_FIN(dst);
       }
-      
       break;
     
     case SYN_RECVD:
@@ -753,7 +629,6 @@ printf("backend.c: teardown(): resent FIN\n");
     }//end of switch statement
 
 print_state(dst);
-
   }//end of while loop
   return;
 }
