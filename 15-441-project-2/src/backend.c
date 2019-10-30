@@ -877,6 +877,13 @@ void my_send(cmu_socket_t *sock, char *sending_buffer){
   //if nothing to send, just return
   if(sending_buffer == NULL)
     return;
+
+  //if triple-ack exist, resend first packet in window
+  if(sock->window.dup_ACK_count == 3){
+    resend_LBA_packet(sock);
+    sock->window.dup_ACK_count = 0;
+    return;
+  }
   //if sent everything already, just return
   if(sock->window.last_byte_sent == sock->window.last_byte_written)
     return;
