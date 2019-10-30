@@ -24,6 +24,18 @@ typedef struct {
 	uint32_t last_seq_received;
 	uint32_t last_ack_received;
 	pthread_mutex_t ack_lock;
+	char * last_byte_acked;
+	char * last_byte_sent; // this actually points to next byte to be sent
+	char * last_byte_written;
+	char * last_byte_read;
+	char * next_byte_expected;
+	char * last_byte_received;
+	uint16_t advertised_window;
+	uint16_t my_window_to_advertise;
+	enum reno_states transmission_state; // should be inited to SLOW_START
+	int dup_ACK_count;
+	size_t recving_buf_begining_seq; //this is constantly updated. shows what seq number the first byte in recving buffer is
+	out_of_order_pkt *out_of_order_queue;
 } window_t;
 
 typedef enum states{				//HJadded: enum states
@@ -39,6 +51,20 @@ typedef enum states{				//HJadded: enum states
 	CLOSE_WAIT,//9
 	LAST_ACK,//10
 }states;
+
+// transmssion states
+typedef enum reno_states{
+	SLOW_START,
+	CONGESTION_AVOIDANCE,
+	FAST_RECOVERY
+}reno_states;
+
+// data struct for out of order packet
+typedef struct {
+	uint32_t seq;
+	uint16_t data_len;
+	out_of_order_pkt *next
+}out_of_order_pkt;
 
 typedef struct {
 	int socket;   
