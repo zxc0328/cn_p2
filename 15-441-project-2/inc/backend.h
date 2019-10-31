@@ -14,6 +14,6 @@ void check_for_data_m(cmu_socket_t * sock, int flags, double timeout_usec);
 double diff(struct timeval start, struct timeval end);
 #define INIT_RTT 0.0
 #define INIT_TIMEOUT 0.1
-#define MAX_SEG_LIFE 120
+#define MAX_SEG_LIFE 2
 #endif
 
