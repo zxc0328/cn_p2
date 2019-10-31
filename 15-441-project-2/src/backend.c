@@ -194,7 +194,7 @@ void insert_out_of_order_queue(cmu_socket_t *sock, char *pkt){
   return;
 }
 
-//
+// update LBRECVD for any packet that will push LBRECVD
 void update_LBRECVD_ptr(cmu_socket_t *sock, char *pkt){
   uint32_t seq = get_seq(pkt);
   uint16_t data_len = get_plen(pkt) - get_hlen(pkt) - get_extension_length(pkt);
@@ -219,23 +219,21 @@ void dequeue_out_of_order_queue(cmu_socket_t *sock){
   
 }
 
-// merge the intervel if there is any, updating LBRCVD
+// merge the intervel if there is any, updating NBE
 void merge_out_of_order_queue(cmu_socket_t *sock, char *pkt){
-  uint16_t pkt_data_len;
   uint32_t newest_seq;
+  uint16_t pkt_data_len = get_plen(pkt) - get_hlen(pkt) - get_extension_length(pkt);
   out_of_order_pkt *current = sock->window.out_of_order_queue;
   //if no entry to merge, return
   if(current == NULL){
     return;
   }
 
-  pkt_data_len = get_plen(pkt) - get_hlen(pkt) - get_extension_length(pkt);
-  sock->window.last_byte_received += (size_t)pkt_data_len;
   newest_seq = get_seq(pkt) + (uint32_t)pkt_data_len;
   while(current != NULL){
     if(newest_seq == current->seq){
-      //merge the interval by updating LBRCVD and dequeuing the out-of-order queue
-      sock->window.last_byte_received += (size_t)current->data_len;
+      //merge the interval by updating NBE and dequeuing the out-of-order queue
+      sock->window.next_byte_expected += (size_t)current->data_len;
       newest_seq += (uint32_t)current->data_len;
       current = current->next;
       dequeue_out_of_order_queue(sock);
@@ -467,9 +465,11 @@ printf("handle_message(): received ACK, updated LBA, now is: %lx\n", (unsigned l
 
         //check the order of received pkt
         if(seq == (size_t)(sock->window.next_byte_expected - sock->window.last_byte_read) + sock->window.recving_buf_begining_seq){
+          char* old_NBE = sock->window.next_byte_expected;
           memcpy(sock->window.next_byte_expected + sock->received_len, pkt + DEFAULT_HEADER_LEN, data_len);
           sock->window.next_byte_expected += data_len;
           merge_out_of_order_queue(sock, pkt);
+          sock->received_len += (int)(sock->window.next_byte_expected - old_NBE);
         }else//this pkt is out of order
         {
           //still copy the data to recving buffer, but need to be at the right location
@@ -547,6 +547,8 @@ int check_for_data(cmu_socket_t * sock, int flags, double timeout_value){       
           NO_FLAG, (struct sockaddr *) &(sock->conn), &conn_len);
       buf_size = buf_size + n;
     }
+printf("check_for_data: recevied a pket!\n");
+hexDump("pkt content",pkt,get_plen(pkt));
     handle_message(sock, pkt);
     free(pkt);
   }
@@ -867,6 +869,7 @@ void update_sending_buffer(char **sending_buffer_addr, cmu_socket_t *sock){
   char * buf_to_send;
   buf_len = sock->application_sending_len;
   buf_to_send = *sending_buffer_addr;
+printf("update_sending_buffer: on entry, sending buf addr is: %lx\n", (unsigned long)*sending_buffer_addr);
   // if there is nothing written, just return
   if(buf_len == 0)
     return;
@@ -917,6 +920,7 @@ void update_sending_buffer(char **sending_buffer_addr, cmu_socket_t *sock){
 
   // update the sending buffer pointer, length to be passed to my_send()
   *sending_buffer_addr = buf_to_send;
+printf("update_sending_buffer: on exit, sending buf addr is: %lx\n", (unsigned long)*sending_buffer_addr);
   return;
 }
 
@@ -943,13 +947,11 @@ void my_send(cmu_socket_t *sock, char *sending_buffer){
     
   //}
   //if nothing to send, just return
-printf("my_send(): checking if sending_buffer is NULL...\n");
   if(sending_buffer == NULL){
 printf("my_send(): sending buffer is NULL, return.\n");
     return;
   }
     
-printf("flag 2....\n");
 
   //if triple-ack exist, resend first packet in window
   if(sock->window.dup_ACK_count == 3){
@@ -958,13 +960,13 @@ printf("my_send(): triple ack detected. resending...\n");
     sock->window.dup_ACK_count = 0;
     return;
   }
-printf("flag 3....\n");
 
   //if sent everything already, just return
-  if(sock->window.last_byte_sent == sock->window.last_byte_written)
+  if(sock->window.last_byte_sent == sock->window.last_byte_written){
+printf("my_send(): LBS == LBW, return.\n");
     return;
+  }
 
-printf("flag 4....\n");
 
   if(sock->window.advertised_window == 0){
     uint32_t seq = ((uint32_t)(sock->window.last_byte_sent - sock->window.last_byte_acked)) + sock->window.last_ack_received;
@@ -976,7 +978,6 @@ printf("flag 4....\n");
     check_for_data(sock, TIMEOUT, current_timeout);
     }
   }
-printf("flag 5...\n");
 
   send_full_real_window(sock);
   return;
@@ -1037,7 +1038,7 @@ void send_full_real_window(cmu_socket_t *sock){
     data_len_to_send -= data_sent_this_turn;
     
     sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
-hexDump("hexdump:packet content is: ", msg, plen);
+hexDump("hexdump: packet sent content is: ", msg, plen);
     // free msg
     free(msg);
     msg = NULL;
@@ -1104,16 +1105,20 @@ printf("backend(): update_sending_buffer():sending buf addr is: %lx, LBA is: %lx
 
       //send till the effective window is zero
       my_send(dst, data);
-printf("\nbackend(): checking for data...current_timeout is: %lf\n", current_timeout);
       if(check_for_data(dst, TIMEOUT, current_timeout) == TIMEOUT){
         resend_LBA_packet(dst);
       }
-printf("\nbackend(): check for data finished. the recv buffer is now: %s\n", dst->received_buf);
+
+printf("\nbackend(): check for data finished. the recv buffer now has: %s\n", dst->received_buf);
 printf("backend(): the LBA is %lx, the LBS is %lx\n", (unsigned long) dst->window.last_byte_acked, (unsigned long)dst->window.last_byte_sent);
-    }while(dst->window.last_byte_acked != dst->window.last_byte_written);//this condition needs double check   
+    }while(dst->window.last_byte_acked != dst->window.last_byte_written);//this condition needs double check
+
     //clean up after after sending
     free(data);
     data = NULL;
+    dst->window.last_byte_acked = NULL;
+    dst->window.last_byte_sent = NULL;
+    dst->window.last_byte_written = NULL;
 
     check_for_data(dst, NO_WAIT, current_timeout);
 
