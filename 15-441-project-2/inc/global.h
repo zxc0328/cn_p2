@@ -83,8 +83,8 @@ typedef struct {
 	int received_len;
 	pthread_mutex_t recv_lock;
 	pthread_cond_t wait_cond;
-	char* sending_buf;
-	int sending_len;
+	char* application_sending_buf;
+	int application_sending_len;
 	int type;
 	pthread_mutex_t send_lock;
 	int dying;

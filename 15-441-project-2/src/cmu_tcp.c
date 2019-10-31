@@ -29,8 +29,8 @@ int cmu_socket(cmu_socket_t * dst, int flag, int port, char * serverIP){
   dst->received_buf = NULL;
   dst->received_len = 0;
   pthread_mutex_init(&(dst->recv_lock), NULL);
-  dst->sending_buf = NULL;
-  dst->sending_len = 0;
+  dst->application_sending_buf = NULL;
+  dst->application_sending_len = 0;
   pthread_mutex_init(&(dst->send_lock), NULL);
   dst->type = flag;
   dst->dying = FALSE;
@@ -130,8 +130,8 @@ int cmu_close(cmu_socket_t * sock){
   if(sock != NULL){
     if(sock->received_buf != NULL)
       free(sock->received_buf);
-    if(sock->sending_buf != NULL)
-      free(sock->sending_buf);
+    if(sock->application_sending_buf != NULL)
+      free(sock->application_sending_buf);
   }
   else{
     perror("ERORR Null scoket\n");
@@ -232,12 +232,12 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
  */
 int cmu_write(cmu_socket_t * sock, char* src, int length){
   while(pthread_mutex_lock(&(sock->send_lock)) != 0);
-  if(sock->sending_buf == NULL)
-    sock->sending_buf = malloc(length);
+  if(sock->application_sending_buf == NULL)
+    sock->application_sending_buf = malloc(length);
   else
-    sock->sending_buf = realloc(sock->sending_buf, length + sock->sending_len);
-  memcpy(sock->sending_buf + sock->sending_len, src, length);
-  sock->sending_len += length;
+    sock->application_sending_buf = realloc(sock->application_sending_buf, length + sock->application_sending_len);
+  memcpy(sock->application_sending_buf + sock->application_sending_len, src, length);
+  sock->application_sending_len += length;
 
   pthread_mutex_unlock(&(sock->send_lock));
   return EXIT_SUCCESS;

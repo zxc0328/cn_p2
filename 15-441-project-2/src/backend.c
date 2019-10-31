@@ -841,21 +841,21 @@ size_t my_min(size_t a, size_t b){
 // given a socket and the amount of data moved from socket's buffer to tcp's
 // sending buf, update the socket information accordingly
 void update_socket_buffer(cmu_socket_t *sock, size_t data_moved){
-  size_t original_sending_len = sock->sending_len;
+  size_t original_sending_len = sock->application_sending_len;
   
   if(data_moved == original_sending_len){//if: moved all data in socket buffer
-    sock->sending_len = 0;
-    free(sock->sending_buf);
-    sock->sending_buf = NULL;
+    sock->application_sending_len = 0;
+    free(sock->application_sending_buf);
+    sock->application_sending_buf = NULL;
   }else//else: adjust the socket buffer by coping what's left to new buffer
   {
     char *new_socket_buf;
     size_t new_sending_len = original_sending_len - data_moved;
     new_socket_buf = (char *) malloc(sizeof(char) * new_sending_len);
-    memcpy(new_socket_buf, sock->sending_buf + data_moved, new_sending_len);
-    free(sock->sending_buf);
-    sock->sending_buf = new_socket_buf;
-    sock->sending_len = new_sending_len;
+    memcpy(new_socket_buf, sock->application_sending_buf + data_moved, new_sending_len);
+    free(sock->application_sending_buf);
+    sock->application_sending_buf = new_socket_buf;
+    sock->application_sending_len = new_sending_len;
   }
   return;
 }
@@ -865,7 +865,7 @@ void update_socket_buffer(cmu_socket_t *sock, size_t data_moved){
 void update_sending_buffer(char **sending_buffer_addr, cmu_socket_t *sock){
   size_t buf_len, data_copied;
   char * buf_to_send;
-  buf_len = sock->sending_len;
+  buf_len = sock->application_sending_len;
   buf_to_send = *sending_buffer_addr;
   // if there is nothing written, just return
   if(buf_len == 0)
@@ -875,7 +875,7 @@ void update_sending_buffer(char **sending_buffer_addr, cmu_socket_t *sock){
     // sending buffer is NULL, create new sending buffer and move data from socket
     data_copied = my_min(MAX_NETWORK_BUFFER, buf_len);
     buf_to_send = (char *) malloc(sizeof(char) * MAX_NETWORK_BUFFER);
-    memcpy(buf_to_send, sock->sending_buf, data_copied);
+    memcpy(buf_to_send, sock->application_sending_buf, data_copied);
     sock->window.last_byte_acked = buf_to_send;
     sock->window.last_byte_sent = buf_to_send;
     sock->window.last_byte_written = buf_to_send + data_copied;
@@ -897,7 +897,7 @@ void update_sending_buffer(char **sending_buffer_addr, cmu_socket_t *sock){
       // copy LBA ~ LBW to new buffer
       memcpy(new_buf_to_send, sock->window.last_byte_acked, len_to_keep);
       // copy data from socket buffer to fill the rest of sending buffer
-      memcpy(new_buf_to_send + len_to_keep, sock->sending_buf, data_copied);
+      memcpy(new_buf_to_send + len_to_keep, sock->application_sending_buf, data_copied);
       // update the three pointers
       sock->window.last_byte_acked = new_buf_to_send;
       sock->window.last_byte_sent = new_buf_to_send + len_in_flight;
@@ -909,7 +909,7 @@ void update_sending_buffer(char **sending_buffer_addr, cmu_socket_t *sock){
     }else// just move all data and update LBW pointer, sock info
     {
       data_copied = buf_len;
-      memcpy(sock->window.last_byte_written, sock->sending_buf, data_copied);
+      memcpy(sock->window.last_byte_written, sock->application_sending_buf, data_copied);
       sock->window.last_byte_written += data_copied;
       update_socket_buffer(sock, data_copied);
     }
@@ -1089,7 +1089,7 @@ printf("\n---------------------------------------------backend loop-------------
     pthread_mutex_unlock(&(dst->death_lock));
     
 
-    if(death && dst->sending_len == 0){                  //HJadded: when this condition is reached, execute teardown() until CLOSED state is reached
+    if(death && dst->application_sending_len == 0){                  //HJadded: when this condition is reached, execute teardown() until CLOSED state is reached
       teardown(dst);
       break;
     }
