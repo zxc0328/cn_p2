@@ -20,6 +20,23 @@
 
 #define SEQMAX 0xffffffff			//HJadded: max sequense number
 
+typedef struct out_of_order_pkt out_of_order_pkt;
+
+// transmssion states
+typedef enum reno_states{
+	SLOW_START,
+	CONGESTION_AVOIDANCE,
+	FAST_RECOVERY
+}reno_states;
+
+// data struct for out of order packet
+struct out_of_order_pkt {
+	uint32_t seq;
+	uint16_t data_len;
+	struct out_of_order_pkt *next;
+};
+
+
 typedef struct {
 	uint32_t last_seq_received;
 	uint32_t last_ack_received;
@@ -52,19 +69,9 @@ typedef enum states{				//HJadded: enum states
 	LAST_ACK,//10
 }states;
 
-// transmssion states
-typedef enum reno_states{
-	SLOW_START,
-	CONGESTION_AVOIDANCE,
-	FAST_RECOVERY
-}reno_states;
 
-// data struct for out of order packet
-typedef struct {
-	uint32_t seq;
-	uint16_t data_len;
-	out_of_order_pkt *next
-}out_of_order_pkt;
+
+
 
 typedef struct {
 	int socket;   

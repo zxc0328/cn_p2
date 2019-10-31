@@ -195,7 +195,7 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
           //update pointers in window
           sock->window.last_byte_read = new_buf;
           sock->window.next_byte_expected = new_buf + NBE_offset;
-          sock->window.last_ack_received = new_buf + LBRCVD_offset;
+          sock->window.last_byte_received = new_buf + LBRCVD_offset;
           sock->window.recving_buf_begining_seq += seq_offset;
         }
         else{
@@ -206,7 +206,7 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
           //update pointers in window
           sock->window.last_byte_read = NULL;
           sock->window.next_byte_expected = NULL;
-          sock->window.last_ack_received = NULL;
+          sock->window.last_byte_received = NULL;
           sock->window.recving_buf_begining_seq += seq_offset;
         }
       }
