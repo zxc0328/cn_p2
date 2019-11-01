@@ -171,6 +171,7 @@ printf("locked tcp.c ln 168\n");
   NBE_offset = (size_t)(sock->window.next_byte_expected - sock->window.last_byte_read);
   LBRCVD_offset = (size_t)(sock->window.last_byte_received - sock->window.last_byte_read);
 
+
   switch(flags){
     case NO_FLAG:
       while(sock->received_len == 0){
