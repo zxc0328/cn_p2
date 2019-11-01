@@ -8,23 +8,31 @@
  *
  */
 void functionality(cmu_socket_t  * sock){
-    char buf[9898];
+    char buf[30000];
     FILE *fp;
     int n;
 
-    n = cmu_read(sock, buf, 200, NO_FLAG);
-    printf("R: %s\n", buf);
-    printf("N: %d\n", n);
-    cmu_write(sock, "hi there", 9);
-    cmu_read(sock, buf, 200, NO_FLAG);
-    cmu_write(sock, "hi there", 9);
+    // n = cmu_read(sock, buf, 200, NO_FLAG);
+    // printf("R: %s\n", buf);
+    // printf("N: %d\n", n);
+    // cmu_write(sock, "hi there im server 1", 21);
+    // cmu_read(sock, buf, 200, NO_FLAG);
+    // cmu_write(sock, "hi there im server 2", 21);
 
-    sleep(5);
-    n = cmu_read(sock, buf, 9898, NO_FLAG);
-    printf("N: %d\n", n);
+    
     fp = fopen("./test/file.c", "w+");
+    n = cmu_read(sock, buf, 30000, NO_FLAG);
     fwrite(buf, 1, n, fp);
-
+    sleep(3);
+     n += cmu_read(sock, buf, 30000, NO_FLAG);
+     fwrite(buf, 1, n, fp);
+    sleep(3);
+     n += cmu_read(sock, buf, 30000, NO_FLAG);
+     fwrite(buf, 1, n, fp);
+    sleep(3);
+     n += cmu_read(sock, buf, 30000, NO_FLAG);
+     fwrite(buf, 1, n, fp);
+    printf("N: %d\n", n);
 }
 
 

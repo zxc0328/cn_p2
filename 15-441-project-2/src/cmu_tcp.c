@@ -158,13 +158,14 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
   int read_len = 0;
   //variable used to update receiving window
   size_t NBE_offset, seq_offset, LBRCVD_offset;
-
+printf("cmu_tcp.c: cmu_read(): reading...\n");
   if(length < 0){
     perror("ERROR negative length");
     return EXIT_ERROR;
   }
 
   while(pthread_mutex_lock(&(sock->recv_lock)) != 0);
+printf("locked tcp.c ln 168\n");
 
   //keep info about out pointers
   NBE_offset = (size_t)(sock->window.next_byte_expected - sock->window.last_byte_read);
@@ -216,6 +217,8 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
       read_len = EXIT_ERROR;
   }
   pthread_mutex_unlock(&(sock->recv_lock));
+printf("unlocked tcp.c ln 220\n");
+
   return read_len;
 }
 
