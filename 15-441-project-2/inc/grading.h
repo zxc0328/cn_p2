@@ -8,11 +8,11 @@
  * and we will replace this file during the autolab testing with new variables.
  */
 
-//window variables
-#define WINDOW_INITIAL_WINDOW_SIZE 1
-#define WINDOW_INITIAL_SSTHRESH 64
+///window variables
+#define WINDOW_INITIAL_WINDOW_SIZE 1375
+#define WINDOW_INITIAL_SSTHRESH 64000
 #define WINDOW_INITIAL_RTT 3000	// ms
-#define WINDOW_INITIAL_ADVERTISED 1 //max packet sizes
+#define WINDOW_INITIAL_ADVERTISED 1375 //max packet sizes
 
 
 //packet lengths
@@ -24,7 +24,7 @@
 #define TCP_LISTENER 1
 
 //Max TCP Buffer
-#define MAX_NETWORK_BUFFER 65536 // 2^16 bytes
+#define MAX_NETWORK_BUFFER 65535 // 2^16 bytes
 
 
 #endif

@@ -29,8 +29,8 @@ int cmu_socket(cmu_socket_t * dst, int flag, int port, char * serverIP){
   dst->received_buf = NULL;
   dst->received_len = 0;
   pthread_mutex_init(&(dst->recv_lock), NULL);
-  dst->sending_buf = NULL;
-  dst->sending_len = 0;
+  dst->application_sending_buf = NULL;
+  dst->application_sending_len = 0;
   pthread_mutex_init(&(dst->send_lock), NULL);
   dst->type = flag;
   dst->dying = FALSE;
@@ -41,6 +41,18 @@ int cmu_socket(cmu_socket_t * dst, int flag, int port, char * serverIP){
   dst->state = CLOSED;                                //HJadded: initialized socket state to CLOSED
   dst->ISN = 0;
   dst->FSN = 0;
+  dst->window.advertised_window = WINDOW_INITIAL_ADVERTISED;
+  dst->window.my_window_to_advertise = MAX_NETWORK_BUFFER;
+  dst->window.last_byte_acked = NULL;
+  dst->window.last_byte_sent = NULL;
+  dst->window.last_byte_written = NULL;
+  dst->window.last_byte_read = NULL;
+  dst->window.next_byte_expected = NULL;
+  dst->window.last_byte_received = NULL;
+  dst->window.transmission_state = SLOW_START;
+  dst->window.dup_ACK_count = 0;
+  dst->window.recving_buf_begining_seq = 0;
+  dst->window.out_of_order_queue = NULL;
 
   if(pthread_cond_init(&dst->wait_cond, NULL) != 0){
     perror("ERROR condition variable not set\n");
@@ -118,8 +130,8 @@ int cmu_close(cmu_socket_t * sock){
   if(sock != NULL){
     if(sock->received_buf != NULL)
       free(sock->received_buf);
-    if(sock->sending_buf != NULL)
-      free(sock->sending_buf);
+    if(sock->application_sending_buf != NULL)
+      free(sock->application_sending_buf);
   }
   else{
     perror("ERORR Null scoket\n");
@@ -144,6 +156,8 @@ int cmu_close(cmu_socket_t * sock){
 int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
   char* new_buf;
   int read_len = 0;
+  //variable used to update receiving window
+  size_t NBE_offset, seq_offset, LBRCVD_offset;
 
   if(length < 0){
     perror("ERROR negative length");
@@ -151,6 +165,10 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
   }
 
   while(pthread_mutex_lock(&(sock->recv_lock)) != 0);
+
+  //keep info about out pointers
+  NBE_offset = (size_t)(sock->window.next_byte_expected - sock->window.last_byte_read);
+  LBRCVD_offset = (size_t)(sock->window.last_byte_received - sock->window.last_byte_read);
 
   switch(flags){
     case NO_FLAG:
@@ -165,6 +183,7 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
           read_len = sock->received_len;
 
         memcpy(dst, sock->received_buf, read_len);
+        seq_offset = (size_t) read_len;
         if(read_len < sock->received_len){
            new_buf = malloc(sock->received_len - read_len);
            memcpy(new_buf, sock->received_buf + read_len, 
@@ -172,11 +191,23 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
            free(sock->received_buf);
            sock->received_len -= read_len;
            sock->received_buf = new_buf;
+
+          //update pointers in window
+          sock->window.last_byte_read = new_buf;
+          sock->window.next_byte_expected = new_buf + NBE_offset;
+          sock->window.last_byte_received = new_buf + LBRCVD_offset;
+          sock->window.recving_buf_begining_seq += seq_offset;
         }
         else{
           free(sock->received_buf);
           sock->received_buf = NULL;
           sock->received_len = 0;
+
+          //update pointers in window
+          sock->window.last_byte_read = NULL;
+          sock->window.next_byte_expected = NULL;
+          sock->window.last_byte_received = NULL;
+          sock->window.recving_buf_begining_seq += seq_offset;
         }
       }
       break;
@@ -201,12 +232,12 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
  */
 int cmu_write(cmu_socket_t * sock, char* src, int length){
   while(pthread_mutex_lock(&(sock->send_lock)) != 0);
-  if(sock->sending_buf == NULL)
-    sock->sending_buf = malloc(length);
+  if(sock->application_sending_buf == NULL)
+    sock->application_sending_buf = malloc(length);
   else
-    sock->sending_buf = realloc(sock->sending_buf, length + sock->sending_len);
-  memcpy(sock->sending_buf + sock->sending_len, src, length);
-  sock->sending_len += length;
+    sock->application_sending_buf = realloc(sock->application_sending_buf, length + sock->application_sending_len);
+  memcpy(sock->application_sending_buf + sock->application_sending_len, src, length);
+  sock->application_sending_len += length;
 
   pthread_mutex_unlock(&(sock->send_lock));
   return EXIT_SUCCESS;

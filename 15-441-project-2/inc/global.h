@@ -20,10 +20,39 @@
 
 #define SEQMAX 0xffffffff			//HJadded: max sequense number
 
+typedef struct out_of_order_pkt out_of_order_pkt;
+
+// transmssion states
+typedef enum reno_states{
+	SLOW_START,
+	CONGESTION_AVOIDANCE,
+	FAST_RECOVERY
+}reno_states;
+
+// data struct for out of order packet
+struct out_of_order_pkt {
+	uint32_t seq;
+	uint16_t data_len;
+	struct out_of_order_pkt *next;
+};
+
+
 typedef struct {
 	uint32_t last_seq_received;
 	uint32_t last_ack_received;
 	pthread_mutex_t ack_lock;
+	char * last_byte_acked;
+	char * last_byte_sent; // this actually points to next byte to be sent
+	char * last_byte_written;
+	char * last_byte_read;
+	char * next_byte_expected;
+	char * last_byte_received;
+	uint16_t advertised_window;
+	uint16_t my_window_to_advertise;
+	enum reno_states transmission_state; // should be inited to SLOW_START
+	int dup_ACK_count;
+	size_t recving_buf_begining_seq; //this is constantly updated. shows what seq number the first byte in recving buffer is
+	out_of_order_pkt *out_of_order_queue;
 } window_t;
 
 typedef enum states{				//HJadded: enum states
@@ -40,6 +69,10 @@ typedef enum states{				//HJadded: enum states
 	LAST_ACK,//10
 }states;
 
+
+
+
+
 typedef struct {
 	int socket;   
 	pthread_t thread_id;
@@ -50,8 +83,8 @@ typedef struct {
 	int received_len;
 	pthread_mutex_t recv_lock;
 	pthread_cond_t wait_cond;
-	char* sending_buf;
-	int sending_len;
+	char* application_sending_buf;
+	int application_sending_len;
 	int type;
 	pthread_mutex_t send_lock;
 	int dying;

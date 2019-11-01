@@ -3,12 +3,67 @@
 #include <time.h>                     //HJdebug: added time.h
 
 
+////////////////////////////////////////////////////debugging purpose: from github.com
+void hexDump(char *desc, void *addr, int len) 
+{
+    int i;
+    unsigned char buff[17];
+    unsigned char *pc = (unsigned char*)addr;
+
+    // Output description if given.
+    if (desc != NULL)
+        printf ("%s:\n", desc);
+
+    // Process every byte in the data.
+    for (i = 0; i < len; i++) {
+        // Multiple of 16 means new line (with line offset).
+
+        if ((i % 16) == 0) {
+            // Just don't print ASCII for the zeroth line.
+            if (i != 0)
+                printf("  %s\n", buff);
+
+            // Output the offset.
+            printf("  %04x ", i);
+        }
+
+        // Now the hex code for the specific character.
+        printf(" %02x", pc[i]);
+
+        // And store a printable ASCII character for later.
+        if ((pc[i] < 0x20) || (pc[i] > 0x7e)) {
+            buff[i % 16] = '.';
+        } else {
+            buff[i % 16] = pc[i];
+        }
+
+        buff[(i % 16) + 1] = '\0';
+    }
+
+    // Pad out last line if not exactly 16 characters.
+    while ((i % 16) != 0) {
+        printf("   ");
+        i++;
+    }
+
+    // And print the final ASCII bit.
+    printf("  %s\n", buff);
+}
+////////////////////////////////////////////////////
+
+
 // initial  value
 double EstimatedRTT = INIT_RTT; // set init EstimatedRTT
-double current_timeout = INIT_TIMEOUT;// set inital timeout value
+double current_timeout = 1;//INIT_TIMEOUT;// set inital timeout value
 
 // debug: debugging function to print current state of a socket(body in backend.c)
 void print_state(cmu_socket_t *dst);
+
+//forward declaration
+size_t my_min(size_t a, size_t b);
+void send_1B_data(cmu_socket_t *sock, char* data, uint32_t seq);
+void send_full_real_window(cmu_socket_t *sock);
+void resend_LBA_packet(cmu_socket_t * sock);
 
 // send a SYN packet: rand() an ISN and writes it to socket
 void send_SYN(cmu_socket_t * dst){                                             
@@ -100,6 +155,102 @@ int check_ack(cmu_socket_t * sock, uint32_t seq){
   return result;
 }
 
+
+
+// insert an entry to out-of-order-queue based on its seq
+void insert_out_of_order_queue(cmu_socket_t *sock, char *pkt){
+  out_of_order_pkt *tmp, *prev, *current = sock->window.out_of_order_queue;
+  tmp = (out_of_order_pkt *)malloc(sizeof(out_of_order_pkt));
+  //construct the out-of-order-pkt
+  tmp->seq = get_seq(pkt);
+  tmp->data_len = get_plen(pkt) - get_hlen(pkt) - get_extension_length(pkt);
+  tmp->next = NULL;
+
+
+  if(current == NULL){
+    sock->window.out_of_order_queue = tmp;
+    return;
+  }
+  prev = NULL;
+  //traverse the list
+  while(current!=NULL){
+    if(tmp->seq < current->seq){
+      if(sock->window.out_of_order_queue == current){
+        sock->window.out_of_order_queue = tmp;
+        tmp->next = current;
+        return;
+      }else
+      {
+        prev->next = tmp;
+        tmp->next = current;
+        return;
+      }
+    }
+    prev = current;
+    current = current->next;
+  }
+  //done traversing list, then just add it to tail
+  prev->next = tmp;
+  return;
+}
+
+//
+void update_LBRECVD_ptr(cmu_socket_t *sock, char *pkt){
+  uint32_t seq = get_seq(pkt);
+  uint16_t data_len = get_plen(pkt) - get_hlen(pkt) - get_extension_length(pkt);
+  char *this_LBRCVD = sock->window.last_byte_read + (size_t)(seq - sock->window.recving_buf_begining_seq) + (size_t)data_len;
+  if( this_LBRCVD > sock->window.last_byte_received){
+    sock->window.last_byte_received = this_LBRCVD;
+  }
+  return;
+}
+
+//remove the first entry fro out-of-order-queue
+void dequeue_out_of_order_queue(cmu_socket_t *sock){
+  if(sock->window.out_of_order_queue == NULL){
+    return;
+  }else
+  {
+    out_of_order_pkt *tmp;
+    tmp = sock->window.out_of_order_queue;
+    sock->window.out_of_order_queue = sock->window.out_of_order_queue->next;
+    free(tmp);
+  }
+  
+}
+
+// merge the intervel if there is any, updating LBRCVD
+void merge_out_of_order_queue(cmu_socket_t *sock, char *pkt){
+  uint16_t pkt_data_len;
+  uint32_t newest_seq;
+  out_of_order_pkt *current = sock->window.out_of_order_queue;
+  //if no entry to merge, return
+  if(current == NULL){
+    return;
+  }
+
+  pkt_data_len = get_plen(pkt) - get_hlen(pkt) - get_extension_length(pkt);
+  sock->window.last_byte_received += (size_t)pkt_data_len;
+  newest_seq = get_seq(pkt) + (uint32_t)pkt_data_len;
+  while(current != NULL){
+    if(newest_seq == current->seq){
+      //merge the interval by updating LBRCVD and dequeuing the out-of-order queue
+      sock->window.last_byte_received += (size_t)current->data_len;
+      newest_seq += (uint32_t)current->data_len;
+      current = current->next;
+      dequeue_out_of_order_queue(sock);
+    }
+    else
+      break;
+  }
+  return;
+}
+
+//update adv_window before sending a response ack
+void update_adv_window(cmu_socket_t *sock){
+  sock->window.my_window_to_advertise = (uint16_t) my_min(MAX_NETWORK_BUFFER -(size_t)(sock->window.last_byte_received - sock->window.last_byte_read), MAX_NETWORK_BUFFER);
+}
+
 /*
  * Param: sock - The socket used for handling packets received
  * Param: pkt - The packet data received by the socket
@@ -133,6 +284,9 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       sock->window.last_ack_received = seq;
       pthread_mutex_unlock(&(sock->window.ack_lock));
 
+      //update the seq the beginning of recving buffer will represent
+      sock->window.recving_buf_begining_seq = get_seq(pkt) + 1;
+
       sock->window.last_seq_received = get_seq(pkt);
       ack = get_seq(pkt) + 1;
       rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, ack, 
@@ -148,7 +302,9 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       if((sock->state != SYN_SENT && sock->state != ESTABLISHED) || get_ack(pkt) != sock->ISN + 1)
 
         break;
-
+      //update the seq the beginning of recving buffer will represent
+      sock->window.recving_buf_begining_seq = get_seq(pkt) + 1;
+      
       sock->window.last_seq_received = get_seq(pkt);
       while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
       sock->window.last_ack_received = get_ack(pkt);
@@ -214,13 +370,37 @@ printf("backend.c: handlemsg(): pkt ack is: %u, my FSN+1 is: %u, my state is", g
       }
       break;
 
-    case ACK_FLAG_MASK:                                             //HJadded: edited behavior to respond to specialized ACK flag 
-      if(get_ack(pkt) > sock->window.last_ack_received){
+    case ACK_FLAG_MASK:                                             //HJadded: edited behavior to respond to specialized ACK flag
+      
+      // check for valid ack number
+      if(get_ack(pkt) >= sock->window.last_ack_received){
+          // if in data trasmission, received dup ACK, update dup count and break
+          if(get_ack(pkt) == sock->window.last_ack_received && sock->state == ESTABLISHED && get_plen(pkt) == get_hlen(pkt)){
+                sock->window.dup_ACK_count++;
+printf("handle_message(): duplicate ACK received, incrementing coutner++\n");
+                break;
+            }
+          // first: update lack byte acked
+          if(sock->window.last_byte_acked != NULL){
+printf("handle_message(): received ACK, updating LBA, before is: %lx\n", (unsigned long)sock->window.last_byte_acked);
+            sock->window.last_byte_acked += (size_t)(get_ack(pkt) - sock->window.last_ack_received);
+printf("handle_message(): received ACK, updated LBA, now is: %lx\n", (unsigned long)sock->window.last_byte_acked);            
+          }
+          // then: update last ack received
           while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
           sock->window.last_ack_received = get_ack(pkt);
           pthread_mutex_unlock(&(sock->window.ack_lock));
         }
-      if(get_plen(pkt) == get_hlen(pkt)){//just an ACK, if data+ACK, go to default
+        else//invalid ACK, ignore.
+        {
+          break;
+        }
+        
+      // update adv_window
+      sock->window.advertised_window = get_advertised_window(pkt);
+
+      //case: this is just an ACK
+      if(get_plen(pkt) == get_hlen(pkt)){
         if(get_ack(pkt) == sock->FSN + 1)
         {
           switch(sock->state){
@@ -247,6 +427,7 @@ printf("backend.c: handlemsg(): pkt ack is: %u, my FSN+1 is: %u, my state is", g
         }
         break;
       }
+      //else this is data+ACK, go to default
     default:
       if(get_ack(pkt) == sock->FSN + 1){
         switch(sock->state){
@@ -267,28 +448,44 @@ printf("backend.c: handlemsg(): pkt ack is: %u, my FSN+1 is: %u, my state is", g
           sock->state = ESTABLISHED;
       }
 
+      //does not process data while in any state other than following
       if(sock->state != ESTABLISHED && sock->state != FIN_WAIT_1 && sock->state != FIN_WAIT_2 && sock->state != CLOSING && sock->state != TIME_WAIT)
         break;
 
-      
-      rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), get_ack(pkt), get_seq(pkt) + 1, 
-        DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, ACK_FLAG_MASK, 1, 0, NULL, NULL, 0);
-      sendto(sock->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
-        &(sock->conn), conn_len);
-      free(rsp);
       seq = get_seq(pkt);
-      if( seq > sock->window.last_seq_received){                  //HJadded: deleted OR condition: || (seq == 0 && sock->window.last_seq_received == 0)
+      //check for valid seq and copy it to recving buf 
+      if( seq > sock->window.last_seq_received){                
         sock->window.last_seq_received = seq;
         data_len = get_plen(pkt) - DEFAULT_HEADER_LEN;
         if(sock->received_buf == NULL){
-          sock->received_buf = malloc(data_len);
+          sock->received_buf = (char *) malloc(MAX_NETWORK_BUFFER);
+          sock->window.last_byte_read = sock->received_buf;
+          sock->window.next_byte_expected = sock->received_buf;
+          sock->window.last_byte_received = sock->received_buf;
         }
-        else{
-          sock->received_buf = realloc(sock->received_buf, sock->received_len + data_len);
+        //TODO: check for enough space in recving buffer(do we even need it tho?)
+
+        //check the order of received pkt
+        if(seq == (size_t)(sock->window.next_byte_expected - sock->window.last_byte_read) + sock->window.recving_buf_begining_seq){
+          memcpy(sock->window.next_byte_expected + sock->received_len, pkt + DEFAULT_HEADER_LEN, data_len);
+          sock->window.next_byte_expected += data_len;
+          merge_out_of_order_queue(sock, pkt);
+        }else//this pkt is out of order
+        {
+          //still copy the data to recving buffer, but need to be at the right location
+          memcpy(sock->window.last_byte_read + (seq - sock->window.recving_buf_begining_seq), pkt + DEFAULT_HEADER_LEN, data_len);
+          //insert entry to out_of_order_list
+          insert_out_of_order_queue(sock, pkt);
+          update_LBRECVD_ptr(sock, pkt);
         }
-        memcpy(sock->received_buf + sock->received_len, pkt + DEFAULT_HEADER_LEN, data_len);
-        sock->received_len += data_len;
       }
+      update_adv_window(sock);
+      rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), get_ack(pkt), get_seq(pkt) + data_len, 
+        DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, NULL, 0);
+      sendto(sock->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
+        &(sock->conn), conn_len);
+printf("handle_message(): sent an ACK for data packet.\n");
+      free(rsp);
       break;
   }
 }
@@ -633,6 +830,240 @@ print_state(dst);
   return;
 }
 
+// return the lower of two numbers, used in update_sending_buffer()
+size_t my_min(size_t a, size_t b){
+  if(a > b)
+    return b;
+  else 
+    return a;
+}
+
+// given a socket and the amount of data moved from socket's buffer to tcp's
+// sending buf, update the socket information accordingly
+void update_socket_buffer(cmu_socket_t *sock, size_t data_moved){
+  size_t original_sending_len = sock->application_sending_len;
+  
+  if(data_moved == original_sending_len){//if: moved all data in socket buffer
+    sock->application_sending_len = 0;
+    free(sock->application_sending_buf);
+    sock->application_sending_buf = NULL;
+  }else//else: adjust the socket buffer by coping what's left to new buffer
+  {
+    char *new_socket_buf;
+    size_t new_sending_len = original_sending_len - data_moved;
+    new_socket_buf = (char *) malloc(sizeof(char) * new_sending_len);
+    memcpy(new_socket_buf, sock->application_sending_buf + data_moved, new_sending_len);
+    free(sock->application_sending_buf);
+    sock->application_sending_buf = new_socket_buf;
+    sock->application_sending_len = new_sending_len;
+  }
+  return;
+}
+
+// copy data from application buffer to sending buffer
+// pls make sure socket.window is initialized
+void update_sending_buffer(char **sending_buffer_addr, cmu_socket_t *sock){
+  size_t buf_len, data_copied;
+  char * buf_to_send;
+  buf_len = sock->application_sending_len;
+  buf_to_send = *sending_buffer_addr;
+  // if there is nothing written, just return
+  if(buf_len == 0)
+    return;
+
+  if(buf_to_send == NULL){
+    // sending buffer is NULL, create new sending buffer and move data from socket
+    data_copied = my_min(MAX_NETWORK_BUFFER, buf_len);
+    buf_to_send = (char *) malloc(sizeof(char) * MAX_NETWORK_BUFFER);
+    memcpy(buf_to_send, sock->application_sending_buf, data_copied);
+    sock->window.last_byte_acked = buf_to_send;
+    sock->window.last_byte_sent = buf_to_send;
+    sock->window.last_byte_written = buf_to_send + data_copied;
+    update_socket_buffer(sock, data_copied);
+
+  }else
+  {
+    size_t data_in_buffer;
+    data_in_buffer = sock->window.last_byte_written - buf_to_send;
+    // if moving all data would overflow the sending buffer
+    // allocate new buffer, and move old data after LBA, and update pointers
+    if(data_in_buffer + buf_len > MAX_NETWORK_BUFFER)
+    {
+      size_t len_in_flight, len_to_keep;
+      char *new_buf_to_send = (char *) malloc(sizeof(char) * MAX_NETWORK_BUFFER);
+      len_to_keep = sock->window.last_byte_written - sock->window.last_byte_acked;
+      len_in_flight = sock->window.last_byte_sent - sock->window.last_byte_acked;
+      data_copied = MAX_NETWORK_BUFFER - len_to_keep;
+      // copy LBA ~ LBW to new buffer
+      memcpy(new_buf_to_send, sock->window.last_byte_acked, len_to_keep);
+      // copy data from socket buffer to fill the rest of sending buffer
+      memcpy(new_buf_to_send + len_to_keep, sock->application_sending_buf, data_copied);
+      // update the three pointers
+      sock->window.last_byte_acked = new_buf_to_send;
+      sock->window.last_byte_sent = new_buf_to_send + len_in_flight;
+      sock->window.last_byte_written = new_buf_to_send + MAX_NETWORK_BUFFER;
+      // update sock info
+      update_socket_buffer(sock, data_copied);
+      // update sending buffer pointer
+      buf_to_send = new_buf_to_send;
+    }else// just move all data and update LBW pointer, sock info
+    {
+      data_copied = buf_len;
+      memcpy(sock->window.last_byte_written, sock->application_sending_buf, data_copied);
+      sock->window.last_byte_written += data_copied;
+      update_socket_buffer(sock, data_copied);
+    }
+  }
+
+  // update the sending buffer pointer, length to be passed to my_send()
+  *sending_buffer_addr = buf_to_send;
+  return;
+}
+
+// send data in segments until there is a full window of bytes in flight
+void my_send(cmu_socket_t *sock, char *sending_buffer){
+  // while(sock->window.last_byte_acked != sock->window.last_byte_written){
+    // switch(sock->window.transmission_state){
+    //   case SLOW_START:
+    //     if(sock->window.cwnd >= WINDOW_INITIAL_SSTHRESH)
+    //     {
+    //       sock->window.transmission_state = CONGESTION_AVOIDANCE;
+    //       continue;
+    //     }
+    //     send_full_real_window(sock, sending_buffer);
+
+    //     break;
+
+    //   case CONGESTION_AVOIDANCE:
+    //     break;
+
+    //   case FAST_RECOVERY:
+    //     break;
+    // }
+    
+  //}
+  //if nothing to send, just return
+printf("my_send(): checking if sending_buffer is NULL...\n");
+  if(sending_buffer == NULL){
+printf("my_send(): sending buffer is NULL, return.\n");
+    return;
+  }
+    
+printf("flag 2....\n");
+
+  //if triple-ack exist, resend first packet in window
+  if(sock->window.dup_ACK_count == 3){
+printf("my_send(): triple ack detected. resending...\n");
+    resend_LBA_packet(sock);
+    sock->window.dup_ACK_count = 0;
+    return;
+  }
+printf("flag 3....\n");
+
+  //if sent everything already, just return
+  if(sock->window.last_byte_sent == sock->window.last_byte_written)
+    return;
+
+printf("flag 4....\n");
+
+  if(sock->window.advertised_window == 0){
+    uint32_t seq = ((uint32_t)(sock->window.last_byte_sent - sock->window.last_byte_acked)) + sock->window.last_ack_received;
+    char *offset_1B = sock->window.last_byte_sent;
+    sock->window.last_byte_sent++;
+    //keep sending 1 byte until received adv_win != 0
+    while(sock->window.advertised_window == 0){
+    send_1B_data(sock, offset_1B, seq);
+    check_for_data(sock, TIMEOUT, current_timeout);
+    }
+  }
+printf("flag 5...\n");
+
+  send_full_real_window(sock);
+  return;
+}
+
+//send the same one byte of data for adv_window probing
+void send_1B_data(cmu_socket_t *sock, char* data_1B, uint32_t seq){
+  char* msg;
+  int sockfd, plen;
+  size_t conn_len = sizeof(sock->conn);
+  sockfd = sock->socket;
+  plen = DEFAULT_HEADER_LEN + 1;
+  msg = create_packet_buf(sock->my_port, sock->their_port, seq, sock->window.last_seq_received + 1, 
+        DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, data_1B, 1);
+  sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
+  // free msg
+  free(msg);
+  msg = NULL;
+  return;
+}
+
+
+// send data until effective window size is zero
+void send_full_real_window(cmu_socket_t *sock){
+  char* msg;
+  char *LBA = sock->window.last_byte_acked, *LBW = sock->window.last_byte_written;
+  int sockfd, plen;
+  size_t effective_window, data_len_to_send, conn_len = sizeof(sock->conn);
+  uint32_t seq;
+
+  sockfd = sock->socket;
+  if((size_t)sock->window.advertised_window < (size_t)(sock->window.last_byte_sent - LBA))
+  {
+    effective_window = 0;
+  }else
+  {
+    effective_window = sock->window.advertised_window - (size_t)(sock->window.last_byte_sent - LBA);// need to bring max_cwnd to the equation
+  }
+  data_len_to_send = my_min((size_t)(LBW - sock->window.last_byte_sent), effective_window);
+  while( data_len_to_send != 0){
+    size_t data_sent_this_turn = 0;
+    seq = (sock->window.last_byte_sent - LBA) + sock->window.last_ack_received;
+
+    if(data_len_to_send <= MAX_DLEN){
+      plen = DEFAULT_HEADER_LEN + data_len_to_send;
+      msg = create_packet_buf(sock->my_port, sock->their_port, seq, sock->window.last_seq_received + 1, 
+        DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, sock->window.last_byte_sent, data_len_to_send);// need to calculate my_adv_window
+      data_sent_this_turn = data_len_to_send;
+    }
+    else{
+      plen = DEFAULT_HEADER_LEN + MAX_DLEN;
+      msg = create_packet_buf(sock->my_port, sock->their_port, seq, sock->window.last_seq_received + 1, 
+        DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, sock->window.last_byte_sent, MAX_DLEN);
+      data_sent_this_turn = MAX_DLEN;
+    }
+    // update LBS in window_t, and remaining data to be sent for this func call
+    sock->window.last_byte_sent += data_sent_this_turn;
+    data_len_to_send -= data_sent_this_turn;
+    
+    sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
+hexDump("hexdump:packet content is: ", msg, plen);
+    // free msg
+    free(msg);
+    msg = NULL;
+  }//end of while loop
+  return;
+}
+
+//resend the first packet in window (data from LBA)
+void resend_LBA_packet(cmu_socket_t * sock){
+  char *LBA, *LBS, *msg;
+  size_t len_to_send, conn_len = sizeof(sock->conn);
+  uint32_t seq;
+  int sockfd, plen;
+  sockfd = sock->socket;
+  LBA = sock->window.last_byte_acked;
+  LBS = sock->window.last_byte_sent;
+  seq = sock->window.last_ack_received;
+  len_to_send = my_min(MAX_DLEN, (size_t)(LBS-LBA));
+  plen = DEFAULT_HEADER_LEN + len_to_send;
+  msg = create_packet_buf(sock->my_port, sock->their_port, seq, sock->window.last_seq_received + 1, 
+  DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, LBA, len_to_send);
+  sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
+  free(msg);
+  msg = NULL;
+}
+
 
 /*
  * Param: in - the socket that is used for backend processing
@@ -643,7 +1074,7 @@ print_state(dst);
  */
 void* begin_backend(void * in){
   cmu_socket_t * dst = (cmu_socket_t *) in;
-  int death, buf_len, send_signal;
+  int death, send_signal;
   char* data;
 
 
@@ -651,33 +1082,39 @@ void* begin_backend(void * in){
 print_state(dst);
 
   handshake(dst);                                 //HJadded: execute handshake process, which loops until ESTABLISHED state is reached
-
   while(TRUE){
+printf("\n---------------------------------------------backend loop---------------------------------\n");
     while(pthread_mutex_lock(&(dst->death_lock)) !=  0);
     death = dst->dying;
     pthread_mutex_unlock(&(dst->death_lock));
     
-    
-    while(pthread_mutex_lock(&(dst->send_lock)) != 0);
-    buf_len = dst->sending_len;
 
-    if(death && buf_len == 0){                  //HJadded: when this condition is reached, execute teardown() until CLOSED state is reached
+    if(death && dst->application_sending_len == 0){                  //HJadded: when this condition is reached, execute teardown() until CLOSED state is reached
       teardown(dst);
       break;
     }
       
-    if(buf_len > 0){
-      data = malloc(buf_len);
-      memcpy(data, dst->sending_buf, buf_len);
-      dst->sending_len = 0;
-      free(dst->sending_buf);
-      dst->sending_buf = NULL;
+    do{
+      //prepare the sending buffer
+      while(pthread_mutex_lock(&(dst->send_lock)) != 0);
+      update_sending_buffer(&data, dst);
       pthread_mutex_unlock(&(dst->send_lock));
-      single_send(dst, data, buf_len);
-      free(data);
-    }
-    else
-      pthread_mutex_unlock(&(dst->send_lock));
+printf("\nbackend(): update_sending_buffer(): sending buf now has: %s\n",data);
+printf("backend(): update_sending_buffer():sending buf addr is: %lx, LBA is: %lx, LBS is: %lx, LBW is: %lx.\n",(unsigned long)data,(unsigned long)dst->window.last_byte_acked, (unsigned long)dst->window.last_byte_sent, (unsigned long)dst->window.last_byte_written);
+
+      //send till the effective window is zero
+      my_send(dst, data);
+printf("\nbackend(): checking for data...current_timeout is: %lf\n", current_timeout);
+      if(check_for_data(dst, TIMEOUT, current_timeout) == TIMEOUT){
+        resend_LBA_packet(dst);
+      }
+printf("\nbackend(): check for data finished. the recv buffer is now: %s\n", dst->received_buf);
+printf("backend(): the LBA is %lx, the LBS is %lx\n", (unsigned long) dst->window.last_byte_acked, (unsigned long)dst->window.last_byte_sent);
+    }while(dst->window.last_byte_acked != dst->window.last_byte_written);//this condition needs double check   
+    //clean up after after sending
+    free(data);
+    data = NULL;
+
     check_for_data(dst, NO_WAIT, current_timeout);
 
     
