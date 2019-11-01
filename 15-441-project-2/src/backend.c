@@ -233,7 +233,7 @@ void merge_out_of_order_queue(cmu_socket_t *sock, char *pkt){
 
   newest_seq = get_seq(pkt) + (uint32_t)pkt_data_len;
   while(current != NULL){
-    if(newest_seq == current->seq){
+    if(newest_seq >= current->seq){
       //merge the interval by updating NBE and dequeuing the out-of-order queue
       sock->window.next_byte_expected += (size_t)current->data_len;
       sock->window.last_seq_received += current->data_len;
@@ -317,7 +317,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       break;
     
     case FIN_FLAG_MASK|ACK_FLAG_MASK:
-printf("backend.c: handlemsg(): pkt ack is: %u, my FSN+1 is: %u, my state is", get_ack(pkt), sock->FSN + 1);print_state(sock);
+printf("backend.c: handlemsg(): pkt ack is: %u, my FSN+1 is: %u, my state is ", get_ack(pkt), sock->FSN + 1);print_state(sock);
       if(get_ack(pkt) == sock->FSN + 1){//FIN/ACK
   printf("backend.c: handle msg(): I reced a FIN|ACK\n");
 
