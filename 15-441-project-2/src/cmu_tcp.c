@@ -128,8 +128,10 @@ int cmu_close(cmu_socket_t * sock){
   pthread_join(sock->thread_id, NULL); 
 
   if(sock != NULL){
-    if(sock->received_buf != NULL)
+    if(sock->received_buf != NULL){
       free(sock->received_buf);
+      sock->received_buf = NULL;  
+    }
     if(sock->application_sending_buf != NULL)
       free(sock->application_sending_buf);
   }
@@ -187,21 +189,29 @@ printf("locked tcp.c ln 168\n");
         memcpy(dst, sock->received_buf, read_len);
         seq_offset = (size_t) read_len;
         if(read_len < sock->received_len){
-           new_buf = malloc(sock->received_len - read_len);
+           new_buf = malloc(MAX_NETWORK_BUFFER);
            memcpy(new_buf, sock->received_buf + read_len, 
             sock->received_len - read_len);
+printf("1. tcp.c: freeing recv_buf addr is: %lx\n", (size_t)sock->received_buf);
+
            free(sock->received_buf);
+           sock->received_buf = NULL;
            sock->received_len -= read_len;
            sock->received_buf = new_buf;
 
           //update pointers in window
           sock->window.last_byte_read = new_buf;
-          sock->window.next_byte_expected = new_buf + NBE_offset;
-          sock->window.last_byte_received = new_buf + LBRCVD_offset;
+          sock->window.next_byte_expected = new_buf + NBE_offset - (size_t)read_len;
+          sock->window.last_byte_received = new_buf + LBRCVD_offset - (size_t)read_len;
           sock->window.recving_buf_begining_seq += seq_offset;
+
+printf("making new recv_buf at addr %lx of size %lu \n", (size_t)sock->received_buf, sizeof(new_buf));
         }
         else{
+printf("sock->recvd_len is %d\n", sock->received_len);
+printf("2. tcp.c: freeing recv_buf addr is: %lx\n", (size_t)sock->received_buf);
           free(sock->received_buf);
+printf("free succsseded!\n");
           sock->received_buf = NULL;
           sock->received_len = 0;
 

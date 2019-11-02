@@ -23,12 +23,15 @@ void functionality(cmu_socket_t  * sock){
     fp = fopen("./test/file.c", "w+");
     n = cmu_read(sock, buf, 30000, NO_FLAG);
     fwrite(buf, 1, n, fp);
+printf("N: %d\n", n);
     sleep(3);
      n += cmu_read(sock, buf, 30000, NO_FLAG);
      fwrite(buf, 1, n, fp);
+printf("N: %d\n", n);
     sleep(3);
      n += cmu_read(sock, buf, 30000, NO_FLAG);
      fwrite(buf, 1, n, fp);
+printf("N: %d\n", n);
     sleep(3);
      n += cmu_read(sock, buf, 30000, NO_FLAG);
      fwrite(buf, 1, n, fp);
@@ -68,7 +71,7 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
 
     functionality(&socket);
-
+printf("I am closing: server.\n");
     if(cmu_close(&socket) < 0)
         exit(EXIT_FAILURE);
     return EXIT_SUCCESS;
