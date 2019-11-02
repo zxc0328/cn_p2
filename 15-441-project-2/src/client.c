@@ -11,29 +11,34 @@ void functionality(cmu_socket_t  * sock){
     char buf[9898];
     int read;
     FILE *fp;
-
-    //cmu_write(sock, "hi there1", 10);
+    int n;
+    cmu_write(sock, "hi there1", 10);
     // cmu_write(sock, "hi there2", 10);
     // cmu_write(sock, "hi there3", 10);
     // cmu_write(sock, "hi there4", 10);
     // cmu_write(sock, "hi there5", 10);
     // cmu_write(sock, "hi there6", 10);
-    //cmu_read(sock, buf, 200, NO_FLAG);
+    n = cmu_read(sock, buf, 200, NO_FLAG);
 
-    //cmu_write(sock, "hi there2", 10);
-    //cmu_read(sock, buf, 200, NO_FLAG);
-    //printf("R: %s\n", buf);
+    printf("R: %s\n", buf);
+    printf("N: %d\n", n);
+
+    cmu_write(sock, "hi there2", 10);
+    n = cmu_read(sock, buf, 200, NO_FLAG);
+    printf("R: %s\n", buf);
+    printf("N: %d\n", n);
+    sleep(5);
 
     // read = cmu_read(sock, buf, 200, NO_WAIT);
     // printf("Read: %d\n", read);
 
-    fp = fopen("./src/longfile", "rb");
-    read = 1;
-    while(read > 0 ){
-        read = fread(buf, 1, 2000, fp);
-        if(read > 0)
-            cmu_write(sock, buf, read);
-    }
+    // fp = fopen("./src/longfile", "rb");
+    // read = 1;
+    // while(read > 0 ){
+    //     read = fread(buf, 1, 2000, fp);
+    //     if(read > 0)
+    //         cmu_write(sock, buf, read);
+    // }
     
 }
 
@@ -54,7 +59,7 @@ int main(int argc, char **argv) {
     serverip = getenv("server15441");
     if (serverip) ;
     else {
-        serverip = "127.0.0.1";
+        serverip = "10.0.0.1";
 
     }
 
