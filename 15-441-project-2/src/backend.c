@@ -223,27 +223,29 @@ void dequeue_out_of_order_queue(cmu_socket_t *sock){
 
 // merge the intervel if there is any, updating NBE
 void merge_out_of_order_queue(cmu_socket_t *sock, char *pkt){
-  uint32_t newest_seq;
+  uint32_t next_seq_number_expected;
   uint16_t pkt_data_len = get_plen(pkt) - get_hlen(pkt) - get_extension_length(pkt);
   out_of_order_pkt *current = sock->window.out_of_order_queue;
   //if no entry to merge, return
   if(current == NULL){
     return;
   }
-
-  newest_seq = get_seq(pkt) + (uint32_t)pkt_data_len;
+  // next_seq_number_expected is the seq number of the last seq received + 1
+  next_seq_number_expected = get_seq(pkt) + (uint32_t)pkt_data_len;
   while(current != NULL){
-    if(newest_seq >= current->seq){
+    if(next_seq_number_expected >= current->seq){
       //merge the interval by updating NBE and dequeuing the out-of-order queue
-      sock->window.next_byte_expected += (size_t)current->data_len;
-      sock->window.last_seq_received += current->data_len;
-      newest_seq += (uint32_t)current->data_len;
+      if(next_seq_number_expected < current->seq + current->data_len){
+        next_seq_number_expected = current->seq + current->data_len;
+      }
       current = current->next;
       dequeue_out_of_order_queue(sock);
     }
     else
-      break;
+      break;  
   }
+  sock->window.next_byte_expected = sock->window.last_byte_read + (size_t)(next_seq_number_expected - sock->window.recving_buf_begining_seq);
+  sock->window.last_seq_received = next_seq_number_expected - 1;
   return;
 }
 
@@ -384,18 +386,18 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       
       // update adv_window
       sock->window.advertised_window = get_advertised_window(pkt);
+
       // if in data trasmission, received dup ACK, update dup count and break
       if(get_ack(pkt) == sock->window.last_ack_received && sock->state == ESTABLISHED && get_plen(pkt) == get_hlen(pkt)){
             sock->window.dup_ACK_count++;
-//printf("handle_message(): duplicate ACK received, incrementing coutner++\n");
             break;
       }
+
       // first: update lack byte acked
       if(sock->window.last_byte_acked != NULL){
-// printf("handle_message(): received ACK, updating LBA, before is: %lx\n", (unsigned long)sock->window.last_byte_acked);
         sock->window.last_byte_acked += (size_t)(get_ack(pkt) - sock->window.last_ack_received);
-// printf("handle_message(): received ACK, updated LBA, now is: %lx\n", (unsigned long)sock->window.last_byte_acked);            
       }
+
       // then: update last ack received
       while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
       sock->window.last_ack_received = get_ack(pkt);
@@ -457,7 +459,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
 
       seq = get_seq(pkt);
       //check for valid seq and copy it to recving buf 
-      if( seq > sock->window.last_seq_received){               
+      if(seq > sock->window.last_seq_received){               
         
         data_len = get_plen(pkt) - get_hlen(pkt) - get_extension_length(pkt);
 
@@ -487,6 +489,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
           sock->received_len += (int)(sock->window.next_byte_expected - old_NBE);
         }else//this pkt is out of order
         {
+printf("handle_msg: recived out of order pkt: current last_seq_received is %u\n", sock->window.last_seq_received);
           //still copy the data to recving buffer, but need to be at the right location
           memcpy(sock->window.last_byte_read + (seq - sock->window.recving_buf_begining_seq), pkt + DEFAULT_HEADER_LEN, data_len);
           //insert entry to out_of_order_list
@@ -497,7 +500,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
 
       update_adv_window(sock);
 
-      rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), get_ack(pkt), get_seq(pkt) + data_len, 
+      rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), get_ack(pkt), sock->window.last_seq_received + 1, 
         DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, NULL, 0);
       sendto(sock->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
         &(sock->conn), conn_len);
