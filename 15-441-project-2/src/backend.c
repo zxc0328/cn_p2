@@ -1192,7 +1192,6 @@ void* begin_backend(void * in){
   
   int flag = 0; //if flag =1, there is a timer, if flag = 0, no timer
   int retransmit_cnt = 0;
-  uint32_t seq;
   uint32_t seq_this_round;
   // set var to calculate RTT
   double SampleRTT;
@@ -1200,6 +1199,7 @@ void* begin_backend(void * in){
   //set var for timeout operation
   double temp_timeout;
   double used_time;
+  uint32_t first_seq_sent=0;// seq number returned by my_send
 
 
   srand(time(NULL));
@@ -1227,17 +1227,17 @@ void* begin_backend(void * in){
     //init timer and retransmit_cnt
     flag = 0;
     retransmit_cnt = 0;
-
+    first_seq_sent = 0;
     while(dst->window.last_byte_acked != dst->window.last_byte_written){    
 //printf("\nbackend(): update_sending_buffer():sending buf addr is: %lx, LBA is: %lx, LBS is: %lx, LBW is: %lx.\n",(unsigned long)data,(unsigned long)dst->window.last_byte_acked, (unsigned long)dst->window.last_byte_sent, (unsigned long)dst->window.last_byte_written);
       //send till the effective window is zero
       
       // get the first seq that my_send() send
-      seq = (dst->window.last_byte_sent - dst->window.last_byte_acked) + dst->window.last_ack_received;
-      my_send(dst, data);
+      //seq = (dst->window.last_byte_sent - dst->window.last_byte_acked) + dst->window.last_ack_received;
+      first_seq_sent = my_send(dst, data);
 
-      // set timer if flag is 0 ( flag is 0 => no timer)
-      if ( flag==0 ){
+      // set timer if no timer and there is data sent ( flag is 0 => no timer)
+      if ( flag==0 && first_seq_sent != NO_DATA_SENT){
         // count retransmit time for Karn/Partridge Algorithm
         retransmit_cnt = 0;
         // set current packet start timer to measure RTT and to check if timeout happen 
@@ -1246,7 +1246,7 @@ void* begin_backend(void * in){
         temp_timeout = current_timeout;
         used_time = 0.0;
         flag = 1; // set a timer
-        seq_this_round = seq;
+        seq_this_round = first_seq_sent;
 
       }
     
@@ -1265,7 +1265,7 @@ void* begin_backend(void * in){
         temp_timeout = current_timeout;
         used_time = 0.0;
         //flag = 0; //remove the timer
-        printf("retransmit_cnt is: %i, temp_timeout is %f, seq_this_round is %u, seq is %u\n", retransmit_cnt,temp_timeout, seq_this_round, seq);
+        printf("retransmit_cnt is: %i, temp_timeout is %f, seq_this_round is %u, first_seq_sent is %u\n", retransmit_cnt,temp_timeout, seq_this_round, first_seq_sent);
         //printf("window.last_byte_acked is %s, dst->window.last_byte_written is %s\n", dst->window.last_byte_acked, dst->window.last_byte_written);
         //printf("window.last_ack_received is %u\n", dst->window.last_ack_received);
       } else { // not timeouted, get a packet, so check if last_ack_received > seq_this_round ( packet get acked)
