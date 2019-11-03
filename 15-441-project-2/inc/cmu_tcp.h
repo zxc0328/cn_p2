@@ -29,6 +29,7 @@ int cmu_write(cmu_socket_t * sock, char* src, int length);
 /*
  * You can add functions below this
  */
+void hexDump(char *desc, void *addr, int len); 
  
 
 #endif

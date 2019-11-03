@@ -89,6 +89,7 @@ typedef struct {
 	struct sockaddr_in conn;
 	char* received_buf;
 	int received_len;
+	int completed_received_len;
 	pthread_mutex_t recv_lock;
 	pthread_cond_t wait_cond;
 	char* application_sending_buf;

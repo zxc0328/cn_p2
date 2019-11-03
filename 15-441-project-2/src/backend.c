@@ -3,53 +3,6 @@
 #include <time.h>                     //HJdebug: added time.h
 
 
-////////////////////////////////////////////////////debugging purpose: from github.com
-void hexDump(char *desc, void *addr, int len) 
-{
-    int i;
-    unsigned char buff[17];
-    unsigned char *pc = (unsigned char*)addr;
-
-    // Output description if given.
-    if (desc != NULL)
-        printf ("%s:\n", desc);
-
-    // Process every byte in the data.
-    for (i = 0; i < len; i++) {
-        // Multiple of 16 means new line (with line offset).
-
-        if ((i % 16) == 0) {
-            // Just don't print ASCII for the zeroth line.
-            if (i != 0)
-                printf("  %s\n", buff);
-
-            // Output the offset.
-            printf("  %04x ", i);
-        }
-
-        // Now the hex code for the specific character.
-        printf(" %02x", pc[i]);
-
-        // And store a printable ASCII character for later.
-        if ((pc[i] < 0x20) || (pc[i] > 0x7e)) {
-            buff[i % 16] = '.';
-        } else {
-            buff[i % 16] = pc[i];
-        }
-
-        buff[(i % 16) + 1] = '\0';
-    }
-
-    // Pad out last line if not exactly 16 characters.
-    while ((i % 16) != 0) {
-        printf("   ");
-        i++;
-    }
-
-    // And print the final ASCII bit.
-    printf("  %s\n", buff);
-}
-////////////////////////////////////////////////////
 
 
 // initial  value
@@ -390,9 +343,14 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       sock->window.advertised_window = get_advertised_window(pkt);
 
       // if in data trasmission, received dup ACK, update dup count and break
-      if(get_ack(pkt) == sock->window.last_ack_received && sock->state == ESTABLISHED && get_plen(pkt) == get_hlen(pkt)){
-            sock->window.dup_ACK_count++;
-            break;
+      if(sock->state == ESTABLISHED && get_plen(pkt) == get_hlen(pkt)){
+        if(get_ack(pkt) == sock->window.last_ack_received){
+          sock->window.dup_ACK_count++;
+          break;
+        }else
+        {
+          sock->window.dup_ACK_count = 0;
+        }  
       }
 
       // first: update lack byte acked
@@ -467,7 +425,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
 
         //init recv buffer if needed
         if(sock->received_buf == NULL){
-          sock->received_buf = (char *) malloc(MAX_NETWORK_BUFFER);
+          sock->received_buf = (char *) calloc(sizeof(char), MAX_NETWORK_BUFFER);
           sock->window.last_byte_read = sock->received_buf;
           sock->window.next_byte_expected = sock->received_buf;
           sock->window.last_byte_received = sock->received_buf;
@@ -491,7 +449,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
           sock->received_len += (int)(sock->window.next_byte_expected - old_NBE);
         }else//this pkt is out of order
         {
-printf("handle_msg: recived out of order pkt: current last_seq_received is %u\n", sock->window.last_seq_received);
+printf("handle_msg: recived out of order pkt: current last_seq_received is %u, this pkt has seq: %u\n", sock->window.last_seq_received, get_seq(pkt));
           //still copy the data to recving buffer, but need to be at the right location
           memcpy(sock->window.last_byte_read + (seq - sock->window.recving_buf_begining_seq), pkt + DEFAULT_HEADER_LEN, data_len);
           //insert entry to out_of_order_list
@@ -846,7 +804,7 @@ printf("backend.c: teardown(): resent FIN\n");
       break;
     }//end of switch statement
 
-print_state(dst);
+//print_state(dst);
   }//end of while loop
   return;
 }
@@ -902,7 +860,7 @@ void update_sending_buffer(char **sending_buffer_addr, cmu_socket_t *sock){
   if(buf_to_send == NULL){
     // sending buffer is NULL, create new sending buffer and move data from socket
     data_copied = my_min(MAX_NETWORK_BUFFER, buf_len);
-    buf_to_send = (char *) malloc(sizeof(char) * MAX_NETWORK_BUFFER);
+    buf_to_send = (char *) calloc(sizeof(char), MAX_NETWORK_BUFFER);
     memcpy(buf_to_send, sock->application_sending_buf, data_copied);
     sock->window.last_byte_acked = buf_to_send;
     sock->window.last_byte_sent = buf_to_send;
@@ -919,7 +877,7 @@ printf("update_sending_buffer: data_copied is: %lu\n", data_copied);
     if(data_in_buffer + buf_len > MAX_NETWORK_BUFFER)
     {
       size_t len_in_flight, len_to_keep;
-      char *new_buf_to_send = (char *) malloc(sizeof(char) * MAX_NETWORK_BUFFER);
+      char *new_buf_to_send = (char *) calloc(sizeof(char), MAX_NETWORK_BUFFER);
       len_to_keep = sock->window.last_byte_written - sock->window.last_byte_acked;
       len_in_flight = sock->window.last_byte_sent - sock->window.last_byte_acked;
       data_copied = my_min(MAX_NETWORK_BUFFER-len_to_keep, buf_len);
@@ -1031,6 +989,7 @@ void send_1B_data(cmu_socket_t *sock, char* data_1B, uint32_t seq){
   msg = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, sock->window.last_seq_received + 1, 
         DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, data_1B, 1);
   sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
+hexDump("send_1B_data(): sent prob pkt:", msg + DEFAULT_HEADER_LEN, 1);
   // free msg
   free(msg);
   msg = NULL;
@@ -1076,7 +1035,7 @@ printf("send_full_read_window: current effective window is: %lu, data in flight 
     // update LBS in window_t, and remaining data to be sent for this func call
     sock->window.last_byte_sent += data_sent_this_turn;
     data_len_to_send -= data_sent_this_turn;
-    
+hexDump("send_full_real_window(): sent a normal data pkt", msg+DEFAULT_HEADER_LEN, MAX_DLEN);    
     sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
 printf("send_full_real_window: sent a data pkt with length %lu\n", data_sent_this_turn);
     // free msg
@@ -1104,6 +1063,7 @@ void resend_LBA_packet(cmu_socket_t * sock){
   msg = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, sock->window.last_seq_received + 1, 
   DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, LBA, len_to_send);
   sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
+hexDump("resend_LBA_packet(): resent a pkt, content is", msg+DEFAULT_HEADER_LEN, len_to_send);
   free(msg);
   msg = NULL;
 }
@@ -1153,7 +1113,7 @@ void* begin_backend(void * in){
 
 
   srand(time(NULL));
-print_state(dst);
+//print_state(dst);
 
   handshake(dst);                                 
   while(TRUE){
