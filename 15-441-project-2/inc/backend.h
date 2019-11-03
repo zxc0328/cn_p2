@@ -16,5 +16,6 @@ double diff(struct timeval start, struct timeval end);
 #define INIT_TIMEOUT 0.1
 #define MAX_SEG_LIFE 2
 #define NO_DATA_SENT 0U
+#define ZERO_ADV_WIND_DETECTED 1
 #endif
 
