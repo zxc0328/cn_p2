@@ -1235,7 +1235,7 @@ void* begin_backend(void * in){
   double temp_timeout;
   double used_time;
   uint32_t first_seq_sent=0;// seq number returned by my_send
-
+  int detected_zero_adv = 0;
 
   srand(time(NULL));
   print_state(dst);
@@ -1263,13 +1263,29 @@ void* begin_backend(void * in){
     flag = 0;
     retransmit_cnt = 0;
     first_seq_sent = 0;
+
+    // while there is written bytes which need sent and acked
     while(dst->window.last_byte_acked != dst->window.last_byte_written){    
-//printf("\nbackend(): update_sending_buffer():sending buf addr is: %lx, LBA is: %lx, LBS is: %lx, LBW is: %lx.\n",(unsigned long)data,(unsigned long)dst->window.last_byte_acked, (unsigned long)dst->window.last_byte_sent, (unsigned long)dst->window.last_byte_written);
-      //send till the effective window is zero
+
+
+
+      // check_for_duo_ack and zero adv window
+      check_for_dup_ack(dst);
+      detected_zero_adv = check_for_zero_adv_window(dst);
       
+      // if we encountered zero adv window, clear timer to prevent error count and error timeout
+      if (detected_zero_adv == ZERO_ADV_WIND_DETECTED){
+        flag=0;
+        retransmit_cnt = 0;
+        gettimeofday(&start, NULL);
+        used_time = 0.0;
+
+      }
+
       // get the first seq that my_send() send
-      //seq = (dst->window.last_byte_sent - dst->window.last_byte_acked) + dst->window.last_ack_received;
       first_seq_sent = my_send(dst, data);
+
+
 
       // set timer if no timer and there is data sent ( flag is 0 => no timer)
       if ( flag==0 && first_seq_sent != NO_DATA_SENT){

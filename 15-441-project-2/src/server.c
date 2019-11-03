@@ -22,7 +22,7 @@ void functionality(cmu_socket_t  * sock){
     // cmu_write(sock, "hi there im server 2", 21);
     // sleep(5);
 
-    
+
     fp = fopen("./test/file.c", "w+");
     n = cmu_read(sock, buf, 30000, NO_FLAG);
     fwrite(buf, 1, n, fp);
