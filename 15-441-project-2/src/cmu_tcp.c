@@ -53,6 +53,9 @@ int cmu_socket(cmu_socket_t * dst, int flag, int port, char * serverIP){
   dst->window.dup_ACK_count = 0;
   dst->window.recving_buf_begining_seq = 0;
   dst->window.out_of_order_queue = NULL;
+  dst->window.window_probing_state = false;
+  dst->window.probing_pkt.seq = 0;
+  dst->window.probing_pkt.probing_byte = NULL;
 
   if(pthread_cond_init(&dst->wait_cond, NULL) != 0){
     perror("ERROR condition variable not set\n");

@@ -1,4 +1,5 @@
 #include "grading.h"
+#include <stdbool.h>
 #ifndef _GLOBAL_H_
 #define _GLOBAL_H_
 
@@ -36,6 +37,11 @@ struct out_of_order_pkt {
 	struct out_of_order_pkt *next;
 };
 
+typedef struct {
+	uint32_t seq;
+	char * probing_byte;
+}probing_pkt_t;
+
 
 typedef struct {
 	uint32_t last_seq_received;
@@ -53,6 +59,8 @@ typedef struct {
 	int dup_ACK_count;
 	size_t recving_buf_begining_seq; //this is constantly updated. shows what seq number the first byte in recving buffer is
 	out_of_order_pkt *out_of_order_queue;
+	bool window_probing_state;
+	probing_pkt_t probing_pkt;
 } window_t;
 
 typedef enum states{				//HJadded: enum states
