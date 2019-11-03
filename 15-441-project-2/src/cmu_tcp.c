@@ -1,5 +1,51 @@
 #include "cmu_tcp.h"
+////////////////////////////////////////////////////debugging purpose: from github.com
+void hexDump(char *desc, void *addr, int len) 
+{
+    int i;
+    unsigned char buff[17];
+    unsigned char *pc = (unsigned char*)addr;
 
+    // Output description if given.
+    if (desc != NULL)
+        printf ("%s:\n", desc);
+
+    // Process every byte in the data.
+    for (i = 0; i < len; i++) {
+        // Multiple of 16 means new line (with line offset).
+
+        if ((i % 16) == 0) {
+            // Just don't print ASCII for the zeroth line.
+            if (i != 0)
+                printf("  %s\n", buff);
+
+            // Output the offset.
+            printf("  %04x ", i);
+        }
+
+        // Now the hex code for the specific character.
+        printf(" %02x", pc[i]);
+
+        // And store a printable ASCII character for later.
+        if ((pc[i] < 0x20) || (pc[i] > 0x7e)) {
+            buff[i % 16] = '.';
+        } else {
+            buff[i % 16] = pc[i];
+        }
+
+        buff[(i % 16) + 1] = '\0';
+    }
+
+    // Pad out last line if not exactly 16 characters.
+    while ((i % 16) != 0) {
+        printf("   ");
+        i++;
+    }
+
+    // And print the final ASCII bit.
+    printf("  %s\n", buff);
+}
+////////////////////////////////////////////////////
 /*
  * Param: dst - The structure where socket information will be stored
  * Param: flag - A flag indicating the type of socket(Listener / Initiator)
@@ -175,7 +221,6 @@ printf("cmu_tcp.c: cmu_read(): reading...\n");
   }
 
   while(pthread_mutex_lock(&(sock->recv_lock)) != 0);
-printf("locked tcp.c ln 168\n");
 
   //keep info about out pointers
   NBE_offset = (size_t)(sock->window.next_byte_expected - sock->window.last_byte_read);
@@ -196,11 +241,22 @@ printf("locked tcp.c ln 168\n");
 
         memcpy(dst, sock->received_buf, read_len);
         seq_offset = (size_t) read_len;
-        if(read_len < sock->received_len){
-           new_buf = malloc(MAX_NETWORK_BUFFER);
+printf("old recv buf begin seq is %lu\n", sock->window.recving_buf_begining_seq);
+        if(read_len == sock->received_len && sock->window.last_byte_received == sock->window.next_byte_expected){
+          free(sock->received_buf);
+            sock->received_buf = NULL;
+            sock->received_len = 0;
+
+            //update pointers in window
+            sock->window.last_byte_read = NULL;
+            sock->window.next_byte_expected = NULL;
+            sock->window.last_byte_received = NULL;
+            sock->window.recving_buf_begining_seq += seq_offset;
+        }
+        else{
+           new_buf = calloc(sizeof(char), MAX_NETWORK_BUFFER);
            memcpy(new_buf, sock->received_buf + read_len, 
-            sock->received_len - read_len);
-printf("1. tcp.c: freeing recv_buf addr is: %lx\n", (size_t)sock->received_buf);
+           (int)(sock->window.last_byte_received - sock->window.last_byte_read) - read_len);
 
            free(sock->received_buf);
            sock->received_buf = NULL;
@@ -211,24 +267,9 @@ printf("1. tcp.c: freeing recv_buf addr is: %lx\n", (size_t)sock->received_buf);
           sock->window.last_byte_read = new_buf;
           sock->window.next_byte_expected = new_buf + NBE_offset - (size_t)read_len;
           sock->window.last_byte_received = new_buf + LBRCVD_offset - (size_t)read_len;
-          sock->window.recving_buf_begining_seq += seq_offset;
-
-printf("making new recv_buf at addr %lx of size %lu \n", (size_t)sock->received_buf, sizeof(new_buf));
+          sock->window.recving_buf_begining_seq += seq_offset;          
         }
-        else{
-printf("sock->recvd_len is %d\n", sock->received_len);
-printf("2. tcp.c: freeing recv_buf addr is: %lx\n", (size_t)sock->received_buf);
-          free(sock->received_buf);
-printf("free succsseded!\n");
-          sock->received_buf = NULL;
-          sock->received_len = 0;
-
-          //update pointers in window
-          sock->window.last_byte_read = NULL;
-          sock->window.next_byte_expected = NULL;
-          sock->window.last_byte_received = NULL;
-          sock->window.recving_buf_begining_seq += seq_offset;
-        }
+printf("new recv buf begin seq is %lu.\n", sock->window.recving_buf_begining_seq);
       }
       break;
     default:
@@ -236,7 +277,6 @@ printf("free succsseded!\n");
       read_len = EXIT_ERROR;
   }
   pthread_mutex_unlock(&(sock->recv_lock));
-printf("unlocked tcp.c ln 220\n");
 
   return read_len;
 }
