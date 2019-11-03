@@ -392,6 +392,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       // if in data trasmission, received dup ACK, update dup count and break
       if(get_ack(pkt) == sock->window.last_ack_received && sock->state == ESTABLISHED && get_plen(pkt) == get_hlen(pkt)){
             sock->window.dup_ACK_count++;
+            sock->recv_flag = DUP_ACK;// for cc
             break;
       }
 
@@ -404,7 +405,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
       sock->window.last_ack_received = get_ack(pkt);
       pthread_mutex_unlock(&(sock->window.ack_lock));
-      
+      sock->recv_flag = NEW_ACK;// for cc
 
       //case: this is just an ACK
       if(get_plen(pkt) == get_hlen(pkt)){
@@ -550,6 +551,7 @@ int check_for_data(cmu_socket_t * sock, int flags, double timeout_value){       
       FD_SET(sock->socket, &ackFD);
       if(select(sock->socket+1, &ackFD, NULL, NULL, &time_out) <= 0){
         pthread_mutex_unlock(&(sock->recv_lock));
+        sock->recv_flag = TIMEOUTED;//for cc
         return EXIT_TIMEOUT;
       }
     case NO_WAIT:
@@ -728,7 +730,7 @@ void print_state(cmu_socket_t *dst){
       printf("state: FIN_WAIT_1\n");
       break;
     case FIN_WAIT_2:
-      printf("state: FIN_WAIT_2\n");
+      //printf("state: FIN_WAIT_2\n");
       break;
     case CLOSING:
       printf("state: CLOSING\n");
@@ -1270,7 +1272,7 @@ void* begin_backend(void * in){
 
 
       // check_for_duo_ack and zero adv window
-      check_for_dup_ack(dst);
+      //check_for_dup_ack(dst);// move to cc_helper()
       detected_zero_adv = check_for_zero_adv_window(dst);
       
       // if we encountered zero adv window, clear timer to prevent error count and error timeout
@@ -1300,18 +1302,19 @@ void* begin_backend(void * in){
         seq_this_round = first_seq_sent;
 
       }
-    
-      
-      if(check_for_data(dst, TIMEOUT, temp_timeout - used_time) == TIMEOUT){
-      //if(check_for_data(dst, TIMEOUT, current_timeout) == TIMEOUT){
+      check_for_data(dst, TIMEOUT, temp_timeout - used_time);
+      cc_helper(dst);
+      printf("transmission_state is(0:SLOW_START, 1:CONGESTION_AVOIDANCE, 2:FAST_RECOVERY ): %i, window.dup_ACK_count is %i, dst->window.cwnd is %u\n", dst->window.transmission_state, dst->window.dup_ACK_count, dst->window.cwnd);
+      if(dst->recv_flag == TIMEOUTED){
+      //if(check_for_data(dst, TIMEOUT, current_timeout) == EXIT_TIMEOUT){
         
         // because of timeouted, retransmition and  update var
-        resend_LBA_packet(dst);
+        //resend_LBA_packet(dst); // move to cc_helper()
 
         retransmit_cnt+=1;
         gettimeofday(&start, NULL);
         // Karn  Algorithm
-        current_timeout = current_timeout*2;
+        current_timeout = current_timeout*1;///// testing
 
         temp_timeout = current_timeout;
         used_time = 0.0;
@@ -1400,4 +1403,116 @@ void* begin_backend(void * in){
 
   pthread_exit(NULL); 
   return NULL; 
+}
+
+
+// cc_helper: the helper function for all congestion control
+// input: need check_for_data() to set sock->window.dup_ACK_count and sock->recv_flag
+// output:
+// 1. update cwnd
+// 2. update ssthresh
+// 3. update dup_ack_count
+// 4. change state according to current stat and recv_flag
+// 5. retransmit missing segment if necessary
+void cc_helper(cmu_socket_t * sock){
+  int dup_ACK_count = sock->window.dup_ACK_count;// current dup ACK count from previous handle message
+  int recv_flag = sock->recv_flag; // current recv_flag from previous check_for_data (NEW_ACK, DUP_ACK, TIMEOUTED)
+  int current_transmission_state = sock->window.transmission_state; // current state in cogestion control
+
+  switch(current_transmission_state){ // use "current" transmission_state, since window.transmission_state might change in this function 
+    case SLOW_START:
+      // check recv flag
+      switch(recv_flag){
+        case NEW_ACK:
+          sock->window.cwnd = sock->window.cwnd + MAX_DLEN; // cwnd = cwnd +MSS
+          sock->window.dup_ACK_count = 0;
+          // transmit new segment as allowed
+          
+          // check current cwnd size and change state if necessary
+          // note this is put in new ACK case
+          if(sock->window.cwnd >= sock->window.ssthresh){
+            sock->window.transmission_state = CONGESTION_AVOIDANCE; // change state
+          }
+          break;
+
+        case DUP_ACK:
+          if (dup_ACK_count>=3){
+            sock->window.ssthresh = sock->window.cwnd/2;
+            sock->window.cwnd = sock->window.ssthresh + 3*MAX_DLEN;
+            resend_LBA_packet(sock);// retransmit missing segment
+            sock->window.transmission_state = FAST_RECOVERY; // change state
+          }
+          // }else{
+          //   //pass, dup_ACK_count already update in handle_message() 
+          // }
+          break;
+
+        case TIMEOUTED:
+          sock->window.ssthresh = sock->window.cwnd/2;
+          sock->window.cwnd = MAX_DLEN;
+          sock->window.dup_ACK_count = 0;
+          resend_LBA_packet(sock);// retransmit missing segment
+          break;
+      }
+
+      break;//transmission_state break
+
+    case CONGESTION_AVOIDANCE:
+      // check recv flag 
+      switch(recv_flag){
+        case NEW_ACK:
+          sock->window.cwnd = sock->window.cwnd +  ((MAX_DLEN *MAX_DLEN)/sock->window.cwnd);
+          sock->window.dup_ACK_count = 0;
+          // transmit new segment as allowed
+          break;
+
+        case DUP_ACK:
+          if (dup_ACK_count>=3){
+            sock->window.ssthresh = sock->window.cwnd/2;
+            sock->window.cwnd = sock->window.ssthresh + 3*MAX_DLEN;
+            resend_LBA_packet(sock);// retransmit missing segment
+            sock->window.transmission_state = FAST_RECOVERY; // change state
+          }
+          // }else{
+          //   //pass, dup_ACK_count already update in handle_message() 
+          // }
+          break;
+
+        case TIMEOUTED:
+          sock->window.ssthresh = sock->window.cwnd/2;
+          sock->window.cwnd = MAX_DLEN;
+          sock->window.dup_ACK_count = 0;
+          resend_LBA_packet(sock);// retransmit missing segment
+          sock->window.transmission_state = SLOW_START; // change state
+          break;
+      }
+
+      break;//transmission_state break
+
+    case FAST_RECOVERY:
+      // check recv flag
+      switch(recv_flag){
+        case NEW_ACK:
+          sock->window.cwnd = sock->window.ssthresh;
+          sock->window.dup_ACK_count = 0;
+          sock->window.transmission_state = CONGESTION_AVOIDANCE; // change state
+          break;
+
+        case DUP_ACK:
+          sock->window.cwnd = sock->window.cwnd + MAX_DLEN;
+          // transmit new segment as allowed
+          break;
+
+        case TIMEOUTED:
+          sock->window.ssthresh = sock->window.cwnd/2;
+          sock->window.cwnd = MAX_DLEN;
+          sock->window.dup_ACK_count = 0;
+          resend_LBA_packet(sock);// retransmit missing segment
+          sock->window.transmission_state = SLOW_START; // change state
+          break;
+      }
+      break;//transmission_state break
+  }
+
+
 }

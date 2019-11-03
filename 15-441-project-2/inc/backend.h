@@ -12,6 +12,8 @@ void * begin_backend(void * in);
 void check_for_data_m(cmu_socket_t * sock, int flags, double timeout_usec);
 // measure time diff
 double diff(struct timeval start, struct timeval end);
+// congestion control helper
+void cc_helper(cmu_socket_t * sock);
 #define INIT_RTT 0.0
 #define INIT_TIMEOUT 0.1
 #define MAX_SEG_LIFE 2
