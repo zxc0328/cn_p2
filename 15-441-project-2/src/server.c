@@ -27,15 +27,15 @@ void functionality(cmu_socket_t  * sock){
     n = cmu_read(sock, buf, 30000, NO_FLAG);
     fwrite(buf, 1, n, fp);
 printf("N: %d\n", n);
-    sleep(3);
+    sleep(4);
      n += cmu_read(sock, buf, 30000, NO_FLAG);
      fwrite(buf, 1, n, fp);
 printf("N: %d\n", n);
-    sleep(3);
+    sleep(4);
      n += cmu_read(sock, buf, 30000, NO_FLAG);
      fwrite(buf, 1, n, fp);
 printf("N: %d\n", n);
-    sleep(3);
+    sleep(4);
      n += cmu_read(sock, buf, 30000, NO_FLAG);
      fwrite(buf, 1, n, fp);
     printf("N: %d\n", n);

@@ -64,6 +64,8 @@ size_t my_min(size_t a, size_t b);
 void send_1B_data(cmu_socket_t *sock, char* data, uint32_t seq);
 uint32_t send_full_real_window(cmu_socket_t *sock);
 void resend_LBA_packet(cmu_socket_t * sock);
+void check_for_dup_ack(cmu_socket_t *sock);
+void check_for_zero_adv_window(cmu_socket_t *sock);
 
 
 // send a SYN packet: rand() an ISN and writes it to socket
@@ -950,6 +952,8 @@ printf("update_sending_buffer: on exit, sending buf addr is: %lx\n", (unsigned l
   return;
 }
 
+
+
 // send data in segments until there is a full window of bytes in flight
 // returns the first seq number it sents or NO_DATA_SENT (0) if no data was sent
 uint32_t my_send(cmu_socket_t *sock, char *sending_buffer){
@@ -974,47 +978,46 @@ uint32_t my_send(cmu_socket_t *sock, char *sending_buffer){
     
   //}
   //if nothing to send, just return
-  if(sending_buffer == NULL){
-printf("my_send(): sending buffer is NULL, return.\n");
+  if(sending_buffer == NULL)
     return NO_DATA_SENT;
-  }
+  
     
-
-  //if triple-ack exist, resend first packet in window
-  if(sock->window.dup_ACK_count >= 3){
-printf("my_send(): triple ack detected. resending...\n");
-    resend_LBA_packet(sock);
-    sock->window.dup_ACK_count = 0;
-    return NO_DATA_SENT;
-  }
+// //if triple-ack exist, resend first packet in window
+//   if(sock->window.dup_ACK_count >= 3){
+// printf("my_send(): triple ack detected. resending...\n");
+//     resend_LBA_packet(sock);
+//     sock->window.dup_ACK_count = 0;
+//     return NO_DATA_SENT;
+//   }
+  
 
   //if sent everything already, just return
-  if(sock->window.last_byte_sent == sock->window.last_byte_written){
+  if(sock->window.last_byte_sent == sock->window.last_byte_written)
     return NO_DATA_SENT;
-  }
+  
 
-  // if adv_window is 0, send probing pkt and return
-  if(sock->window.advertised_window == 0){
-    uint32_t seq;
-    char *offset_1B;
-    if(sock->window.window_probing_state == false){
-      seq = ((uint32_t)(sock->window.last_byte_sent - sock->window.last_byte_acked)) + sock->window.last_ack_received;
-      offset_1B = sock->window.last_byte_sent;
-      send_1B_data(sock, offset_1B, seq);
-      // update window info and the probing pkt content
-      sock->window.probing_pkt.seq = seq;
-      sock->window.probing_pkt.probing_byte = offset_1B;
-      sock->window.last_byte_sent++;
-      sock->window.window_probing_state = true;
-    }else
-    {
-      send_1B_data(sock, sock->window.probing_pkt.probing_byte, sock->window.probing_pkt.seq);
-    }
-    return sock->window.probing_pkt.seq;
-  }else
-  {
-    sock->window.window_probing_state = false;
-  }
+  // // if adv_window is 0, send probing pkt and return
+  // if(sock->window.advertised_window == 0){
+  //   uint32_t seq;
+  //   char *offset_1B;
+  //   if(sock->window.window_probing_state == false){
+  //     seq = ((uint32_t)(sock->window.last_byte_sent - sock->window.last_byte_acked)) + sock->window.last_ack_received;
+  //     offset_1B = sock->window.last_byte_sent;
+  //     send_1B_data(sock, offset_1B, seq);
+  //     // update window info and the probing pkt content
+  //     sock->window.probing_pkt.seq = seq;
+  //     sock->window.probing_pkt.probing_byte = offset_1B;
+  //     sock->window.last_byte_sent++;
+  //     sock->window.window_probing_state = true;
+  //   }else
+  //   {
+  //     send_1B_data(sock, sock->window.probing_pkt.probing_byte, sock->window.probing_pkt.seq);
+  //   }
+  //   return sock->window.probing_pkt.seq;
+  // }else
+  // {
+  //   sock->window.window_probing_state = false;
+  // }
 
   
   return send_full_real_window(sock);
@@ -1109,6 +1112,37 @@ void resend_LBA_packet(cmu_socket_t * sock){
   msg = NULL;
 }
 
+// resends last segment of min(LBW-LBA or MAX_DLEN) because of DupAck
+void check_for_dup_ack(cmu_socket_t *sock){
+  //if triple-ack exist, resend first packet in window
+  if(sock->window.dup_ACK_count >= 3){
+printf("my_send(): triple ack detected. resending...\n");
+    resend_LBA_packet(sock);
+    sock->window.dup_ACK_count = 0;
+  }
+  return;
+}
+
+// keeps sending probing packet until the adv_window is not 0
+void check_for_zero_adv_window(cmu_socket_t *sock){
+  uint32_t seq;
+  char *offset_1B;
+  
+  if(sock->window.advertised_window != 0)
+    return;
+  seq = ((uint32_t)(sock->window.last_byte_sent - sock->window.last_byte_acked)) + sock->window.last_ack_received;
+  offset_1B = sock->window.last_byte_sent;
+  sock->window.last_byte_sent++;
+  
+  sock->window.window_probing_state = true;
+  while(sock->window.advertised_window == 0){
+    send_1B_data(sock, offset_1B, seq);
+    check_for_data(sock, TIMEOUT, current_timeout);
+  }  
+  sock->window.window_probing_state = false;
+
+  return;
+}
 
 /*
  * Param: in - the socket that is used for backend processing
@@ -1142,9 +1176,11 @@ print_state(dst);
     update_sending_buffer(&data, dst);
     pthread_mutex_unlock(&(dst->send_lock));
 
+
     //send and wait for ack of all data in sending buffer
     while(dst->window.last_byte_acked != dst->window.last_byte_written){    
-      //send till the effective window is zero
+      check_for_dup_ack(dst);
+      check_for_zero_adv_window(dst);
       my_send(dst, data);
       if(check_for_data(dst, TIMEOUT, current_timeout) == TIMEOUT){
         resend_LBA_packet(dst);
