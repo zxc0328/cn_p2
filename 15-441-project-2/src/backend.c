@@ -1219,6 +1219,11 @@ void* begin_backend(void * in){
     update_sending_buffer(&data, dst);
     pthread_mutex_unlock(&(dst->send_lock));
     //send and wait for ack of all data in sending byte
+    
+    //init timer and retransmit_cnt
+    flag = 0;
+    retransmit_cnt = 0;
+
     while(dst->window.last_byte_acked != dst->window.last_byte_written){    
 //printf("\nbackend(): update_sending_buffer():sending buf addr is: %lx, LBA is: %lx, LBS is: %lx, LBW is: %lx.\n",(unsigned long)data,(unsigned long)dst->window.last_byte_acked, (unsigned long)dst->window.last_byte_sent, (unsigned long)dst->window.last_byte_written);
       //send till the effective window is zero
@@ -1251,8 +1256,7 @@ void* begin_backend(void * in){
         retransmit_cnt+=1;
         gettimeofday(&start, NULL);
         // Karn  Algorithm
-        //current_timeout = current_timeout*2;
-        current_timeout = current_timeout*1; // for testing
+        current_timeout = current_timeout*2;
 
         temp_timeout = current_timeout;
         used_time = 0.0;
