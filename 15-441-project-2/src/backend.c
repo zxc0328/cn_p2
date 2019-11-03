@@ -559,9 +559,8 @@ int check_for_data(cmu_socket_t * sock, int flags, double timeout_value){       
       perror("ERROR unknown flag");
       return EXIT_ERROR;
   }
-  //printf("hello client a %zd ",len);
+
   if(len >= DEFAULT_HEADER_LEN){
-    //printf("hello client b ");
     plen = get_plen(hdr);
     pkt = malloc(plen);
     while(buf_size < plen ){
@@ -1108,7 +1107,7 @@ void resend_LBA_packet(cmu_socket_t * sock){
  *  the other side. 
  *
  */
-void* begin_backend(void * in){
+void* begin_backend_old(void * in){
   cmu_socket_t * dst = (cmu_socket_t *) in;
   int death, send_signal;
   char* data;
@@ -1182,7 +1181,7 @@ print_state(dst);
  *  the other side. 
  *
  */
-void* begin_backend_m(void * in){
+void* begin_backend(void * in){
   cmu_socket_t * dst = (cmu_socket_t *) in;
   int death, send_signal;
   char* data;
