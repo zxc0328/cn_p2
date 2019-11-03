@@ -65,7 +65,7 @@ void send_1B_data(cmu_socket_t *sock, char* data, uint32_t seq);
 uint32_t send_full_real_window(cmu_socket_t *sock);
 void resend_LBA_packet(cmu_socket_t * sock);
 void check_for_dup_ack(cmu_socket_t *sock);
-void check_for_zero_adv_window(cmu_socket_t *sock);
+int check_for_zero_adv_window(cmu_socket_t *sock);
 
 
 // send a SYN packet: rand() an ISN and writes it to socket
@@ -1120,12 +1120,12 @@ printf("my_send(): triple ack detected. resending...\n");
 }
 
 // keeps sending probing packet until the adv_window is not 0
-void check_for_zero_adv_window(cmu_socket_t *sock){
+int check_for_zero_adv_window(cmu_socket_t *sock){
   uint32_t seq;
   char *offset_1B;
   
   if(sock->window.advertised_window != 0)
-    return;
+    return 0;
   seq = ((uint32_t)(sock->window.last_byte_sent - sock->window.last_byte_acked)) + sock->window.last_ack_received;
   offset_1B = sock->window.last_byte_sent;
   sock->window.last_byte_sent++;
@@ -1136,8 +1136,7 @@ void check_for_zero_adv_window(cmu_socket_t *sock){
     check_for_data(sock, TIMEOUT, current_timeout);
   }  
   sock->window.window_probing_state = false;
-
-  return;
+  return ZERO_ADV_WIND_DETECTED;
 }
 
 /*
