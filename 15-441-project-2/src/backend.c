@@ -7,7 +7,7 @@
 
 // initial  value
 double EstimatedRTT = INIT_RTT; // set init EstimatedRTT
-double current_timeout = 0.33;//INIT_TIMEOUT;// set inital timeout value
+double current_timeout = 1;//INIT_TIMEOUT;// set inital timeout value
 
 // debug: debugging function to print current state of a socket(body in backend.c)
 void print_state(cmu_socket_t *dst);
@@ -992,7 +992,6 @@ void send_1B_data(cmu_socket_t *sock, char* data_1B, uint32_t seq){
   msg = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, sock->window.last_seq_received + 1, 
         DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, data_1B, 1);
   sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
-hexDump("send_1B_data(): sent prob pkt:", msg + DEFAULT_HEADER_LEN, 1);
   // free msg
   free(msg);
   msg = NULL;
@@ -1038,7 +1037,7 @@ printf("send_full_read_window: current effective window is: %lu, data in flight 
     // update LBS in window_t, and remaining data to be sent for this func call
     sock->window.last_byte_sent += data_sent_this_turn;
     data_len_to_send -= data_sent_this_turn;
-hexDump("send_full_real_window(): sent a normal data pkt", msg+DEFAULT_HEADER_LEN, MAX_DLEN);    
+   
     sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
 printf("send_full_real_window: sent a data pkt with length %lu\n", data_sent_this_turn);
     // free msg
@@ -1068,7 +1067,6 @@ void resend_LBA_packet(cmu_socket_t * sock){
   msg = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, sock->window.last_seq_received + 1, 
   DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, LBA, len_to_send);
   sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
-hexDump("resend_LBA_packet(): resent a pkt, content is", msg+DEFAULT_HEADER_LEN, len_to_send);
   free(msg);
   msg = NULL;
 }

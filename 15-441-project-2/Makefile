@@ -23,3 +23,4 @@ client: $(OBJS)
 
 clean:
 	-rm -f $(BUILD_DIR)/*.o peer client server
+test: all
