@@ -62,7 +62,7 @@ void print_state(cmu_socket_t *dst);
 //forward declaration
 size_t my_min(size_t a, size_t b);
 void send_1B_data(cmu_socket_t *sock, char* data, uint32_t seq);
-void send_full_real_window(cmu_socket_t *sock);
+uint32_t send_full_real_window(cmu_socket_t *sock);
 void resend_LBA_packet(cmu_socket_t * sock);
 
 
@@ -951,7 +951,8 @@ printf("update_sending_buffer: on exit, sending buf addr is: %lx\n", (unsigned l
 }
 
 // send data in segments until there is a full window of bytes in flight
-void my_send(cmu_socket_t *sock, char *sending_buffer){
+// returns the first seq number it sents or NO_DATA_SENT (0) if no data was sent
+uint32_t my_send(cmu_socket_t *sock, char *sending_buffer){
   // while(sock->window.last_byte_acked != sock->window.last_byte_written){
     // switch(sock->window.transmission_state){
     //   case SLOW_START:
@@ -975,7 +976,7 @@ void my_send(cmu_socket_t *sock, char *sending_buffer){
   //if nothing to send, just return
   if(sending_buffer == NULL){
 printf("my_send(): sending buffer is NULL, return.\n");
-    return;
+    return NO_DATA_SENT;
   }
     
 
@@ -984,30 +985,39 @@ printf("my_send(): sending buffer is NULL, return.\n");
 printf("my_send(): triple ack detected. resending...\n");
     resend_LBA_packet(sock);
     sock->window.dup_ACK_count = 0;
-    return;
+    return NO_DATA_SENT;
   }
 
   //if sent everything already, just return
   if(sock->window.last_byte_sent == sock->window.last_byte_written){
-printf("my_send(): LBS == LBW, return.\n");
-    return;
+    return NO_DATA_SENT;
   }
 
-
+  // if adv_window is 0, send probing pkt and return
   if(sock->window.advertised_window == 0){
-    uint32_t seq = ((uint32_t)(sock->window.last_byte_sent - sock->window.last_byte_acked)) + sock->window.last_ack_received;
-    char *offset_1B = sock->window.last_byte_sent;
-    sock->window.last_byte_sent++;
-    //keep sending 1 byte until received adv_win != 0
-    while(sock->window.advertised_window == 0){
-    send_1B_data(sock, offset_1B, seq);
-    check_for_data(sock, TIMEOUT, current_timeout);
-    }// need to consider dup ack
-    // sock->window.dup_ACK_count = 0;
+    uint32_t seq;
+    char *offset_1B;
+    if(sock->window.window_probing_state == false){
+      seq = ((uint32_t)(sock->window.last_byte_sent - sock->window.last_byte_acked)) + sock->window.last_ack_received;
+      offset_1B = sock->window.last_byte_sent;
+      send_1B_data(sock, offset_1B, seq);
+      // update window info and the probing pkt content
+      sock->window.probing_pkt.seq = seq;
+      sock->window.probing_pkt.probing_byte = offset_1B;
+      sock->window.last_byte_sent++;
+      sock->window.window_probing_state = true;
+    }else
+    {
+      send_1B_data(sock, sock->window.probing_pkt.probing_byte, sock->window.probing_pkt.seq);
+    }
+    return sock->window.probing_pkt.seq;
+  }else
+  {
+    sock->window.window_probing_state = false;
   }
 
-  send_full_real_window(sock);
-  return;
+  
+  return send_full_real_window(sock);
 }
 
 //send the same one byte of data for adv_window probing
@@ -1028,12 +1038,12 @@ void send_1B_data(cmu_socket_t *sock, char* data_1B, uint32_t seq){
 
 
 // send data until effective window size is zero
-void send_full_real_window(cmu_socket_t *sock){
+uint32_t send_full_real_window(cmu_socket_t *sock){
   char* msg;
   char *LBA = sock->window.last_byte_acked, *LBW = sock->window.last_byte_written;
   int sockfd, plen;
   size_t effective_window, data_len_to_send, conn_len = sizeof(sock->conn);
-  uint32_t seq;
+  uint32_t seq, first_seq_sent;
 
   sockfd = sock->socket;
   if((size_t)sock->window.advertised_window < (size_t)(sock->window.last_byte_sent - LBA))
@@ -1043,8 +1053,8 @@ void send_full_real_window(cmu_socket_t *sock){
   {
     effective_window = sock->window.advertised_window - (size_t)(sock->window.last_byte_sent - LBA);// need to bring max_cwnd to the equation
   }
-printf("send_full_read_window: my effective window is: %lu, but data in flight is %lu\n", effective_window, (size_t)(sock->window.last_byte_sent - sock->window.last_byte_acked));
-
+printf("send_full_read_window: current effective window is: %lu, data in flight is %lu\n", effective_window, (size_t)(sock->window.last_byte_sent - sock->window.last_byte_acked));
+  first_seq_sent = (sock->window.last_byte_sent - LBA) + sock->window.last_ack_received;
   data_len_to_send = my_min((size_t)(LBW - sock->window.last_byte_sent), effective_window);
   while( data_len_to_send != 0){
     size_t data_sent_this_turn = 0;
@@ -1072,7 +1082,7 @@ printf("send_full_real_window: sent a data pkt with length %lu\n", data_sent_thi
     free(msg);
     msg = NULL;
   }//end of while loop
-  return;
+  return first_seq_sent;
 }
 
 //resend the first packet in window (data from LBA)
@@ -1116,14 +1126,13 @@ void* begin_backend_old(void * in){
   srand(time(NULL));
 print_state(dst);
 
-  handshake(dst);                                 //HJadded: execute handshake process, which loops until ESTABLISHED state is reached
+  handshake(dst);                                 
   while(TRUE){
     while(pthread_mutex_lock(&(dst->death_lock)) !=  0);
     death = dst->dying;
     pthread_mutex_unlock(&(dst->death_lock));
-    
 
-    if(death && dst->application_sending_len == 0){                  //HJadded: when this condition is reached, execute teardown() until CLOSED state is reached
+    if(death && dst->application_sending_len == 0){                 
       teardown(dst);
       break;
     }
@@ -1132,18 +1141,16 @@ print_state(dst);
     while(pthread_mutex_lock(&(dst->send_lock)) != 0);
     update_sending_buffer(&data, dst);
     pthread_mutex_unlock(&(dst->send_lock));
-    //send and wait for ack of all data in sending byte
+
+    //send and wait for ack of all data in sending buffer
     while(dst->window.last_byte_acked != dst->window.last_byte_written){    
-//printf("\nbackend(): update_sending_buffer():sending buf addr is: %lx, LBA is: %lx, LBS is: %lx, LBW is: %lx.\n",(unsigned long)data,(unsigned long)dst->window.last_byte_acked, (unsigned long)dst->window.last_byte_sent, (unsigned long)dst->window.last_byte_written);
       //send till the effective window is zero
       my_send(dst, data);
       if(check_for_data(dst, TIMEOUT, current_timeout) == TIMEOUT){
         resend_LBA_packet(dst);
       }
-
-// printf("\nbackend(): check for data finished. the recv buffer now has: %s\n", dst->received_buf);
-// printf("backend(): the LBA is %lx, the LBS is %lx\n", (unsigned long) dst->window.last_byte_acked, (unsigned long)dst->window.last_byte_sent);
     }
+
     //clean up after after sending
     free(data);
     data = NULL;
@@ -1156,7 +1163,6 @@ print_state(dst);
 
     
     while(pthread_mutex_lock(&(dst->recv_lock)) != 0);
-    
     if(dst->received_len > 0)
       send_signal = TRUE;
     else
@@ -1167,8 +1173,6 @@ print_state(dst);
       pthread_cond_signal(&(dst->wait_cond));  
     }
   }
-
-
   pthread_exit(NULL); 
   return NULL; 
 }
