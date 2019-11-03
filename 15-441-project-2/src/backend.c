@@ -1268,8 +1268,8 @@ void* begin_backend(void * in){
         //printf("seq_this_round is: %u, seq_this_round is %u\n", seq_this_round,seq_this_round);
         // check ack, if last_ack_received > seq_this_round, it means data is acked
         if(check_ack(dst, seq_this_round)){
-          // if there is no retrainsmition, update EstimatedRTT and timeout
-          if (retransmit_cnt==0){
+          // if there is no retrainsmition and timer exist, update EstimatedRTT and timeout
+          if (retransmit_cnt==0 && flag == 1){
             //set current packet end timer
             gettimeofday(&end, NULL);
             SampleRTT = diff(start, end);

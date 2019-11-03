@@ -11,7 +11,7 @@ void functionality(cmu_socket_t  * sock){
     char buf[9898];
     int read;
     FILE *fp;
-    int n;
+    // int n;
     // cmu_write(sock, "hi there1", 10);
     // // cmu_write(sock, "hi there2", 10);
     // // cmu_write(sock, "hi there3", 10);
