@@ -25,8 +25,8 @@ int check_for_zero_adv_window(cmu_socket_t *sock);
 void send_SYN(cmu_socket_t * dst){                                             
   uint32_t ISN;
   char *rsp;
-  //ISN = rand() % SEQMAX;
-  ISN = 0;
+  ISN = rand() % SEQMAX;
+  //ISN = 0;
   dst->ISN = ISN;
   while(pthread_mutex_lock(&(dst->window.ack_lock)) != 0);
   dst->window.last_ack_received = ISN;
@@ -236,8 +236,8 @@ void handle_message(cmu_socket_t * sock, char* pkt){
 
       //define seq: first time ISN = rand(), otherwise seq = sock->ISN
       if(sock->state == LISTEN){
-        //seq = rand() % SEQMAX;
-        seq = 1000000;
+        seq = rand() % SEQMAX;
+        //seq = 1000000;
         sock->ISN = seq;
       }else{
         seq = sock->ISN;
