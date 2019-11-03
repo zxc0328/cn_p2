@@ -12,33 +12,33 @@ void functionality(cmu_socket_t  * sock){
     FILE *fp;
     int n;
 
-    n = cmu_read(sock, buf, 200, NO_FLAG);
-    printf("R: %s\n", buf);
-    printf("N: %d\n", n);
-    cmu_write(sock, "hi there im server 1", 21);
-    n = cmu_read(sock, buf, 200, NO_FLAG);
-    printf("R: %s\n", buf);
-    printf("N: %d\n", n);
-    cmu_write(sock, "hi there im server 2", 21);
-    sleep(5);
+    // n = cmu_read(sock, buf, 200, NO_FLAG);
+    // printf("R: %s\n", buf);
+    // printf("N: %d\n", n);
+    // cmu_write(sock, "hi there im server 1", 21);
+    // n = cmu_read(sock, buf, 200, NO_FLAG);
+    // printf("R: %s\n", buf);
+    // printf("N: %d\n", n);
+    // cmu_write(sock, "hi there im server 2", 21);
+    // sleep(5);
 
     
-//     fp = fopen("./test/file.c", "w+");
-//     n = cmu_read(sock, buf, 30000, NO_FLAG);
-//     fwrite(buf, 1, n, fp);
-// printf("N: %d\n", n);
-//     sleep(3);
-//      n += cmu_read(sock, buf, 30000, NO_FLAG);
-//      fwrite(buf, 1, n, fp);
-// printf("N: %d\n", n);
-//     sleep(3);
-//      n += cmu_read(sock, buf, 30000, NO_FLAG);
-//      fwrite(buf, 1, n, fp);
-// printf("N: %d\n", n);
-//     sleep(3);
-//      n += cmu_read(sock, buf, 30000, NO_FLAG);
-//      fwrite(buf, 1, n, fp);
-//     printf("N: %d\n", n);
+    fp = fopen("./test/file.c", "w+");
+    n = cmu_read(sock, buf, 30000, NO_FLAG);
+    fwrite(buf, 1, n, fp);
+printf("N: %d\n", n);
+    sleep(3);
+     n += cmu_read(sock, buf, 30000, NO_FLAG);
+     fwrite(buf, 1, n, fp);
+printf("N: %d\n", n);
+    sleep(3);
+     n += cmu_read(sock, buf, 30000, NO_FLAG);
+     fwrite(buf, 1, n, fp);
+printf("N: %d\n", n);
+    sleep(3);
+     n += cmu_read(sock, buf, 30000, NO_FLAG);
+     fwrite(buf, 1, n, fp);
+    printf("N: %d\n", n);
 }
 
 

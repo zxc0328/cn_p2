@@ -12,33 +12,33 @@ void functionality(cmu_socket_t  * sock){
     int read;
     FILE *fp;
     int n;
-    cmu_write(sock, "hi there1", 10);
+    // cmu_write(sock, "hi there1", 10);
+    // // cmu_write(sock, "hi there2", 10);
+    // // cmu_write(sock, "hi there3", 10);
+    // // cmu_write(sock, "hi there4", 10);
+    // // cmu_write(sock, "hi there5", 10);
+    // // cmu_write(sock, "hi there6", 10);
+    // n = cmu_read(sock, buf, 200, NO_FLAG);
+
+    // printf("R: %s\n", buf);
+    // printf("N: %d\n", n);
+
     // cmu_write(sock, "hi there2", 10);
-    // cmu_write(sock, "hi there3", 10);
-    // cmu_write(sock, "hi there4", 10);
-    // cmu_write(sock, "hi there5", 10);
-    // cmu_write(sock, "hi there6", 10);
-    n = cmu_read(sock, buf, 200, NO_FLAG);
-
-    printf("R: %s\n", buf);
-    printf("N: %d\n", n);
-
-    cmu_write(sock, "hi there2", 10);
-    n = cmu_read(sock, buf, 200, NO_FLAG);
-    printf("R: %s\n", buf);
-    printf("N: %d\n", n);
-    sleep(5);
+    // n = cmu_read(sock, buf, 200, NO_FLAG);
+    // printf("R: %s\n", buf);
+    // printf("N: %d\n", n);
+    // sleep(5);
 
     // read = cmu_read(sock, buf, 200, NO_WAIT);
     // printf("Read: %d\n", read);
 
-    // fp = fopen("./src/longfile", "rb");
-    // read = 1;
-    // while(read > 0 ){
-    //     read = fread(buf, 1, 2000, fp);
-    //     if(read > 0)
-    //         cmu_write(sock, buf, read);
-    // }
+    fp = fopen("./src/longfile", "rb");
+    read = 1;
+    while(read > 0 ){
+        read = fread(buf, 1, 2000, fp);
+        if(read > 0)
+            cmu_write(sock, buf, read);
+    }
     
 }
 

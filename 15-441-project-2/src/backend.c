@@ -1262,8 +1262,8 @@ void* begin_backend(void * in){
         used_time = 0.0;
         //flag = 0; //remove the timer
         printf("retransmit_cnt is: %i, temp_timeout is %f, seq_this_round is %u, seq is %u\n", retransmit_cnt,temp_timeout, seq_this_round, seq);
-        printf("window.last_byte_acked is %s, dst->window.last_byte_written is %s\n", dst->window.last_byte_acked, dst->window.last_byte_written);
-        printf("window.last_ack_received is %u\n", dst->window.last_ack_received);
+        //printf("window.last_byte_acked is %s, dst->window.last_byte_written is %s\n", dst->window.last_byte_acked, dst->window.last_byte_written);
+        //printf("window.last_ack_received is %u\n", dst->window.last_ack_received);
       } else { // not timeouted, get a packet, so check if last_ack_received > seq_this_round ( packet get acked)
         //printf("seq_this_round is: %u, seq_this_round is %u\n", seq_this_round,seq_this_round);
         // check ack, if last_ack_received > seq_this_round, it means data is acked
