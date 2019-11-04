@@ -1,32 +1,34 @@
-
 #include "cmu_tcp.h"
 
 /*
  * Param: sock - used for reading and writing to a connection
  *
+ * Purpose: To provide some simple test cases and demonstrate how 
+ *  the sockets will be used.
  *
  */
 void functionality(cmu_socket_t  * sock){
-    char buf[9898];
+    char buf[30000];
     FILE *fp;
     int n;
-    int read;
 
-    // Wait to hear from an initiator
-    n = 0;
-    while (n == 0) {
-        n = cmu_read(sock, buf, 9898, NO_FLAG);
-    }
 
-    // Send over a random file
-    fp = fopen("./test/random.input", "rb");
-    read = 1;
-    while(read > 0 ){
-        read = fread(buf, 1, 2000, fp);
-        if(read > 0)
-            cmu_write(sock, buf, read);
-    }
-
+    fp = fopen("./test/file.c", "w+");
+    n = cmu_read(sock, buf, 30000, NO_FLAG);
+    fwrite(buf, 1, n, fp);
+printf("N: %d\n", n);
+    sleep(2);
+     n = cmu_read(sock, buf, 30000, NO_FLAG);
+     fwrite(buf, 1, n, fp);
+printf("N: %d\n", n);
+    sleep(2);
+     n = cmu_read(sock, buf, 30000, NO_FLAG);
+     fwrite(buf, 1, n, fp);
+printf("N: %d\n", n);
+    sleep(2);
+     n = cmu_read(sock, buf, 30000, NO_FLAG);
+     fwrite(buf, 1, n, fp);
+    printf("N: %d\n", n);
 }
 
 
@@ -42,13 +44,13 @@ int main(int argc, char **argv) {
     char *serverip;
     char *serverport;
     cmu_socket_t socket;
-
+    
     serverip = getenv("server15441");
     if (serverip) ;
     else {
         serverip = "10.0.0.1";
+
     }
-    printf("Listening at %s\n", serverip);
 
     serverport = getenv("serverport15441");
     if (serverport) ;
@@ -62,7 +64,7 @@ int main(int argc, char **argv) {
         exit(EXIT_FAILURE);
 
     functionality(&socket);
-
+printf("I am closing: server.\n");
     if(cmu_close(&socket) < 0)
         exit(EXIT_FAILURE);
     return EXIT_SUCCESS;

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 #Change this to be your pcap file
 #You can capture a pcap file with wireshark or tcpdump
 #https://support.rackspace.com/how-to/capturing-packets-with-tcpdump/
-FILE_TO_READ = '/vagrant/15-441-project-2/haodong.pcap'
+FILE_TO_READ = '/vagrant/15-441-project-2/server.pcap'
 
 packets = rdpcap(FILE_TO_READ)
 packet_list = []
@@ -18,7 +18,7 @@ for packet in packets:
 
 	if(IP in packet and packet[IP].dport == server_port and 15441 == int.from_bytes(payload[:4], byteorder='big')):
 		mask = int.from_bytes(payload[20:21], byteorder='big')
-		if(mask == 0):
+		if(payload.length > 0):
 			num_packets = num_packets + 1
 		elif((mask & 4) == 4):
 			num_packets = num_packets - 1
@@ -32,3 +32,4 @@ for packet in packets:
 print(packet_list)
 plt.scatter(packet_list, times)
 plt.show()
+plt.savefig('server')
