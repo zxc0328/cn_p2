@@ -362,7 +362,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
         } else {
           
           // if new ack
-          if(get_ack(pkt) != sock->window.last_ack_received){
+          if(get_ack(pkt) > sock->window.last_ack_received){
             sock->window.dup_ACK_count = 0;
             sock->recv_flag = NEW_ACK;// for cc
           }
@@ -1303,6 +1303,7 @@ void* begin_backend(void * in){
         retransmit_cnt = 0;
         gettimeofday(&start, NULL);
         used_time = 0.0;
+        printf("encounter ZERO_ADV_WIND");
 
       }
 
@@ -1312,7 +1313,7 @@ void* begin_backend(void * in){
 
 
       // set timer if no timer and there is data sent ( flag is 0 => no timer)
-      if ( flag==0 && first_seq_sent != NO_DATA_SENT){
+      if ( flag==0 ){
         // count retransmit time for Karn/Partridge Algorithm
         retransmit_cnt = 0;
         // set current packet start timer to measure RTT and to check if timeout happen 
@@ -1321,7 +1322,16 @@ void* begin_backend(void * in){
         temp_timeout = current_timeout;
         used_time = 0.0;
         flag = 1; // set a timer
-        seq_this_round = first_seq_sent;
+
+        // if there is a send seq number we can trace
+        if (first_seq_sent != NO_DATA_SENT){
+          seq_this_round = first_seq_sent;
+
+        } else{ // if my_seond does not send anything this round
+          seq_this_round = first_seq_sent;
+          printf("=====================this is no seq number to trace this round============================\n");
+        }
+        
 
       }
 
@@ -1347,8 +1357,8 @@ void* begin_backend(void * in){
         retransmit_cnt+=1;
         gettimeofday(&start, NULL);
         // Karn  Algorithm
-        current_timeout = current_timeout*1;///// testing
-
+        //current_timeout = current_timeout*1;///// testing
+        current_timeout = current_timeout*2;
         temp_timeout = current_timeout;
         used_time = 0.0;
         //flag = 0; //remove the timer
@@ -1356,9 +1366,9 @@ void* begin_backend(void * in){
         //printf("window.last_byte_acked is %s, dst->window.last_byte_written is %s\n", dst->window.last_byte_acked, dst->window.last_byte_written);
         //printf("window.last_ack_received is %u\n", dst->window.last_ack_received);
       } else { // not timeouted, get a packet, so check if last_ack_received > seq_this_round ( packet get acked)
-        //printf("seq_this_round is: %u, seq_this_round is %u\n", seq_this_round,seq_this_round);
-        // check ack, if last_ack_received > seq_this_round, it means data is acked
-        if(check_ack(dst, seq_this_round)){
+
+        // check there is a sent seq_number, and check ack, if last_ack_received > seq_this_round, it means data is acked
+        if(seq_this_round != NO_DATA_SENT && check_ack(dst, seq_this_round)){
           // if there is no retrainsmition and timer exist, update EstimatedRTT and timeout
           if (retransmit_cnt==0 && flag == 1){
             //set current packet end timer
@@ -1391,9 +1401,17 @@ void* begin_backend(void * in){
 
         
         } else {// if ack is not received (last_ack_received still <= seq_this_round)
-          //measure cur time related to start of transmition and calculate used time
-          gettimeofday(&cur, NULL);
-          used_time = diff(start, cur);
+          
+          // if there is a seq number traced by current timer
+          if (seq_this_round != NO_DATA_SENT ){
+            gettimeofday(&cur, NULL);
+            used_time = diff(start, cur);
+            //measure cur time related to start of transmition and calculate used time
+            // we need to remember how much time we used when we are traing a particulat seq
+          } else {
+            used_time = 0.0;
+          }
+
           // if timeouted
           if (temp_timeout - used_time <= 0.0) {
             //because of retransmition, update var
