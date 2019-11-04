@@ -24,21 +24,44 @@ void functionality(cmu_socket_t  * sock){
 
 
     fp = fopen("./test/file.c", "w+");
-    n = cmu_read(sock, buf, 30000, NO_FLAG);
-    fwrite(buf, 1, n, fp);
-printf("N: %d\n", n);
-    sleep(5);
-     n = cmu_read(sock, buf, 30000, NO_FLAG);
-     fwrite(buf, 1, n, fp);
-printf("N: %d\n", n);
-    sleep(5);
-     n = cmu_read(sock, buf, 30000, NO_FLAG);
-     fwrite(buf, 1, n, fp);
-printf("N: %d\n", n);
-    sleep(5);
-     n = cmu_read(sock, buf, 30000, NO_FLAG);
-     fwrite(buf, 1, n, fp);
-    printf("N: %d\n", n);
+//     n = cmu_read(sock, buf, 30000, NO_FLAG);
+//     fwrite(buf, 1, n, fp);
+// printf("N: %d\n", n);
+//         n = cmu_read(sock, buf, 30000, NO_FLAG);
+//     fwrite(buf, 1, n, fp);
+// printf("N: %d\n", n);
+//         n = cmu_read(sock, buf, 30000, NO_FLAG);
+//     fwrite(buf, 1, n, fp);
+// printf("N: %d\n", n);
+//         n = cmu_read(sock, buf, 30000, NO_FLAG);
+//     fwrite(buf, 1, n, fp);
+// printf("N: %d\n", n);
+//         n = cmu_read(sock, buf, 30000, NO_FLAG);
+//     fwrite(buf, 1, n, fp);
+// printf("N: %d\n", n);
+//         n = cmu_read(sock, buf, 30000, NO_FLAG);
+//     fwrite(buf, 1, n, fp);
+// printf("N: %d\n", n);
+//     n = cmu_read(sock, buf, 30000, NO_FLAG);
+//     fwrite(buf, 1, n, fp);
+// printf("N: %d\n", n);
+//      n = cmu_read(sock, buf, 30000, NO_FLAG);
+//      fwrite(buf, 1, n, fp);
+// printf("N: %d\n", n);
+//     sleep(1);
+//      n = cmu_read(sock, buf, 30000, NO_FLAG);
+//      fwrite(buf, 1, n, fp);
+// printf("N: %d\n", n);
+//     sleep(5);
+//      n = cmu_read(sock, buf, 30000, NO_FLAG);
+//      fwrite(buf, 1, n, fp);
+//     printf("N: %d\n", n);
+
+    while(1){
+         n = cmu_read(sock, buf, 30000, NO_FLAG);
+        fwrite(buf, 1, n, fp);
+        // sleep(0.1);
+    }
 }
 
 

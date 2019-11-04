@@ -1260,10 +1260,17 @@ void* begin_backend(void * in){
   double used_time;
   uint32_t first_seq_sent=0;// seq number returned by my_send
   int detected_zero_adv = 0;
-
+  FILE *fp, *fp2;
   srand(time(NULL));
   print_state(dst);
+  gettimeofday(&dst->global_start, NULL);
+  struct timeval temp;
+  fp = fopen("./tt.txt", "w");
+  fclose(fp);
 
+  fp2 = fopen("./time.txt", "w");
+  fclose(fp2);
+  double delta;
 
   handshake(dst);                                 //HJadded: execute handshake process, which loops until ESTABLISHED state is reached
   while(TRUE){
@@ -1344,7 +1351,23 @@ void* begin_backend(void * in){
       } else{
         printf("dst->recv_flag == -1!\n");
       }
+
+      fp = fopen("./tt.txt", "a");
+      fp2 = fopen("./time.txt", "a");
+      if(fp == NULL || fp2 == NULL)
+      {
+        printf("open file Error!");
+        exit(1);
+      }
       
+      gettimeofday(&temp, NULL);
+      delta = diff(dst->global_start, temp);
+      fprintf(fp2, "%f\n",delta);
+
+      fprintf(fp,"%lu\n",(size_t)dst->window.cwnd);
+      fclose(fp);
+      fclose(fp2);
+
       printf("transmission_state is(0:SLOW_START, 1:CONGESTION_AVOIDANCE, 2:FAST_RECOVERY ): %i, window.dup_ACK_count is %i, dst->window.cwnd is %u, ssthresh is %u\n",
        dst->window.transmission_state, dst->window.dup_ACK_count, dst->window.cwnd, dst->window.ssthresh);
 

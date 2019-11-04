@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #ifndef _GLOBAL_H_
 #define _GLOBAL_H_
+#include <time.h>  
 
 #define EXIT_SUCCESS 0
 #define EXIT_ERROR -1
@@ -109,6 +110,7 @@ typedef struct {
 	uint32_t ISN;
 	uint32_t FSN;
 	int recv_flag;
+	struct timeval global_start;
 } cmu_socket_t;
 
 #endif
