@@ -25,7 +25,7 @@ int check_for_zero_adv_window(cmu_socket_t *sock);
 void send_SYN(cmu_socket_t * dst){                                             
   uint32_t ISN;
   char *rsp;
-  ISN = rand() % SEQMAX;
+  ISN = rand() % (SEQMAX / 2);
   //ISN = 0;
   dst->ISN = ISN;
   while(pthread_mutex_lock(&(dst->window.ack_lock)) != 0);
@@ -236,7 +236,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
 
       //define seq: first time ISN = rand(), otherwise seq = sock->ISN
       if(sock->state == LISTEN){
-        seq = rand() % SEQMAX;
+        seq = rand() % (SEQMAX / 2);
         //seq = 1000000;
         sock->ISN = seq;
       }else{
@@ -723,7 +723,9 @@ void print_state(cmu_socket_t *dst){
 }
 
 // handshake()
-void handshake(cmu_socket_t * dst){                      
+void handshake(cmu_socket_t * dst){
+  struct timeval start, current;
+  double time_limit;                      
   while(dst->state != ESTABLISHED){
 printf("starting ");print_state(dst);
 
@@ -749,13 +751,29 @@ printf("starting ");print_state(dst);
         break;
 
       case SYN_RECVD:
-        if(check_for_data(dst, TIMEOUT, current_timeout) != 0){
-          resend_SYNACK(dst);
-        }else{
-          if(dst->state == SYN_RECVD)
-          resend_SYNACK(dst);
+        // if(check_for_data(dst, TIMEOUT, current_timeout) != 0){
+        //   resend_SYNACK(dst);
+        // }else{
+        //   if(dst->state == SYN_RECVD)
+        //   resend_SYNACK(dst);
+        // }
+        // break;
+        gettimeofday(&start, NULL);
+        gettimeofday(&current, NULL);
+        time_limit = current_timeout;
+        while(diff(start, current) < time_limit){
+          // timed out or error happened, break out
+          if(check_for_data(dst, TIMEOUT, current_timeout) != 0)
+            break;
+          // state advanced, break out
+          if(dst->state != SYN_RECVD)
+            break;
+          // nothing happened, update timer and keep looping
+          gettimeofday(&current, NULL);   
         }
-
+        // resend SYNACK if still stuck at SYN_RECVD after looping
+        if(dst->state == SYN_RECVD)
+          resend_SYNACK(dst);
         break;
       
       default:
