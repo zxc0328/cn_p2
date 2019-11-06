@@ -9,108 +9,27 @@
 double EstimatedRTT = INIT_RTT; // set init EstimatedRTT
 double current_timeout = 1;//INIT_TIMEOUT;// set inital timeout value
 
-// debug: debugging function to print current state of a socket(body in backend.c)
-void print_state(cmu_socket_t *dst);
-
 //forward declaration
-size_t my_min(size_t a, size_t b);
+void send_SYN(cmu_socket_t * dst);
+void resend_SYN(cmu_socket_t * dst);
+void send_ACK(cmu_socket_t * dst);
+void resend_SYNACK(cmu_socket_t * sock);
+void send_FIN(cmu_socket_t * dst);
+
 void send_1B_data(cmu_socket_t *sock, char* data, uint32_t seq);
 uint32_t send_full_real_window(cmu_socket_t *sock);
 void resend_LBA_packet(cmu_socket_t * sock);
 void check_for_dup_ack(cmu_socket_t *sock);
 int check_for_zero_adv_window(cmu_socket_t *sock);
 
+size_t my_min(size_t a, size_t b);
+void cc_helper(cmu_socket_t * sock);
 
-// send a SYN packet: rand() an ISN and writes it to socket
-void send_SYN(cmu_socket_t * dst){                                             
-  uint32_t ISN;
-  char *rsp;
-  //ISN = rand() % SEQMAX;
-  ISN = 0;
-  dst->ISN = ISN;
-  while(pthread_mutex_lock(&(dst->window.ack_lock)) != 0);
-  dst->window.last_ack_received = ISN;
-  pthread_mutex_unlock(&(dst->window.ack_lock));
-  rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), ISN, 0, 
-    DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, SYN_FLAG_MASK, MAX_NETWORK_BUFFER, 0, NULL, NULL, 0);
-  sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
-    &(dst->conn), sizeof(dst->conn));
-  free(rsp);
-  return;
-}
-
-// resend a SYN packet: reads the ISN on socket
-void resend_SYN(cmu_socket_t * dst){                                             
-  char *rsp;
-  rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), dst->ISN, 0, 
-    DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, SYN_FLAG_MASK, MAX_NETWORK_BUFFER, 0, NULL, NULL, 0);
-  sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
-    &(dst->conn), sizeof(dst->conn));
-  free(rsp);
-  return;
-}
-
-// send an ACK packet: reads from the socket's window
-void send_ACK(cmu_socket_t * dst){                                           
-  char *rsp;
-  rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), 
-  dst->window.last_ack_received, dst->window.last_seq_received + 1, 
-  DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, ACK_FLAG_MASK, dst->window.my_window_to_advertise, 0, NULL, NULL, 0);
-  sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
-    &(dst->conn), sizeof(dst->conn));
-  free(rsp);
-  return;
-}
+// debug function, delete before submission
+void print_state(cmu_socket_t *dst);
+void print_transmission_state(cmu_socket_t *dst);
 
 
-// only used by listener when in SYN_RECVD state and failed to receive ack of SYN|ACK
-// it reads from socket's window
-void resend_SYNACK(cmu_socket_t * sock){                                         
-  char* rsp;
-  uint32_t seq, ack;                                                  
-  socklen_t conn_len = sizeof(sock->conn);
-  seq = sock->ISN;
-  ack = sock->window.last_seq_received  + 1;
-  rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, ack, 
-    DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, SYN_FLAG_MASK|ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, NULL, 0);
-  sendto(sock->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
-    &(sock->conn), conn_len);
-  free(rsp);
-  sock->state = SYN_RECVD;
-}
-
-// send a FIN|ACK packet, writes the FSN to socket's window
-void send_FIN(cmu_socket_t * dst){                                           
-  char *rsp;
-  while(pthread_mutex_lock(&(dst->window.ack_lock)) != 0);
-  dst->FSN = dst->window.last_ack_received;
-  pthread_mutex_unlock(&(dst->window.ack_lock));
-  rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), 
-  dst->FSN, dst->window.last_seq_received + 1, 
-  DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, FIN_FLAG_MASK|ACK_FLAG_MASK, dst->window.my_window_to_advertise, 0, NULL, NULL, 0);
-  sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
-    &(dst->conn), sizeof(dst->conn));
-  free(rsp);
-  return;
-}
-
-/*
- * Param: sock - The socket to check for acknowledgements. 
- * Param: seq - Sequence number to check 
- *
- * Purpose: To tell if a packet (sequence number) has been acknowledged.
- *
- */
-int check_ack(cmu_socket_t * sock, uint32_t seq){
-  int result;
-  while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
-  if(sock->window.last_ack_received > seq)
-    result = TRUE;
-  else
-    result = FALSE;
-  pthread_mutex_unlock(&(sock->window.ack_lock));
-  return result;
-}
 
 
 
@@ -122,7 +41,6 @@ void insert_out_of_order_queue(cmu_socket_t *sock, char *pkt){
   tmp->seq = get_seq(pkt);
   tmp->data_len = get_plen(pkt) - get_hlen(pkt) - get_extension_length(pkt);
   tmp->next = NULL;
-
 
   if(current == NULL){
     sock->window.out_of_order_queue = tmp;
@@ -236,8 +154,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
 
       //define seq: first time ISN = rand(), otherwise seq = sock->ISN
       if(sock->state == LISTEN){
-        //seq = rand() % SEQMAX;
-        seq = 1000000;
+        seq = rand() % SEQMAX;
         sock->ISN = seq;
       }else{
         seq = sock->ISN;
@@ -329,7 +246,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       }
       break;
 
-    case ACK_FLAG_MASK:                                             //HJadded: edited behavior to respond to specialized ACK flag
+    case ACK_FLAG_MASK:                                            
       
       // check for valid ack number: must be greater than last_ack_recvd 
       if(get_ack(pkt) < sock->window.last_ack_received)
@@ -342,17 +259,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       // update adv_window
       sock->window.advertised_window = get_advertised_window(pkt);
 
-      // // if in data trasmission, received dup ACK, update dup count and break
-      // if(sock->state == ESTABLISHED && get_plen(pkt) == get_hlen(pkt)){
-      //   if(get_ack(pkt) == sock->window.last_ack_received){
-      //     sock->window.dup_ACK_count++;
-      //     break;
-      //   }else
-      //   {
-      //     sock->window.dup_ACK_count = 0;
-      //   }  
-      // }
-            // if in data trasmission or close wait: 
+      // if in data trasmission or close wait: 
       if((sock->state == ESTABLISHED || sock->state == CLOSE_WAIT)){
         
         // if pure ack
@@ -376,11 +283,8 @@ void handle_message(cmu_socket_t * sock, char* pkt){
             sock->window.dup_ACK_count = 0;
             sock->recv_flag = NEW_ACK;// for cc
           }
-
         }
-
       }
-
       // first: update lack byte acked
       if(sock->window.last_byte_acked != NULL){
         sock->window.last_byte_acked += (size_t)(get_ack(pkt) - sock->window.last_ack_received);
@@ -522,8 +426,6 @@ int check_for_data(cmu_socket_t * sock, int flags, double timeout_value){       
   time_out.tv_sec = (long)intpart;
   time_out.tv_usec = (long)(decpart*1000000);
   // sec to usec, multiply 1000000, ex: 0.5 sec => 500000 usec
-
-
 
   while(pthread_mutex_lock(&(sock->recv_lock)) != 0);
   switch(flags){
@@ -682,61 +584,16 @@ void single_send(cmu_socket_t * sock, char* data, int buf_len){
               used_time = 0.0;
               printf("retransmit_cnt is: %i, temp_timeout is %f\n", retransmit_cnt,temp_timeout);
             }
-
           }
-        
         }// end of while(TRUE) loop
-
-
         data_offset = data_offset + plen - DEFAULT_HEADER_LEN;
       }
     }
 }
 
-
-void print_state(cmu_socket_t *dst){
-  switch(dst->state){
-    case CLOSED:
-      printf("state: CLOSED\n");
-      break;
-    case LISTEN:
-      printf("state: LISTEN\n");
-      break;
-    case SYN_SENT:
-      printf("state: SYN_SENT\n");
-      break;
-    case SYN_RECVD:
-      printf("state: SYN_RECVD\n");
-      break;
-    case ESTABLISHED:
-      printf("state: ESTABLISHED\n");
-      break;
-    case FIN_WAIT_1:
-      printf("state: FIN_WAIT_1\n");
-      break;
-    case FIN_WAIT_2:
-      //printf("state: FIN_WAIT_2\n");
-      break;
-    case CLOSING:
-      printf("state: CLOSING\n");
-      break;
-    case TIME_WAIT:
-      printf("state: TIME_WAIT\n");
-      break;
-    case CLOSE_WAIT:
-      printf("state: CLOSE_WAIT\n");
-      break;
-    case LAST_ACK:
-      printf("state: LAST_ACK\n");
-      break;
-  }
-}
-
 // handshake()
 void handshake(cmu_socket_t * dst){                      
   while(dst->state != ESTABLISHED){
-printf("starting ");print_state(dst);
-
     switch(dst->state){
       case CLOSED:
         send_SYN(dst);
@@ -765,15 +622,11 @@ printf("starting ");print_state(dst);
           if(dst->state == SYN_RECVD)
           resend_SYNACK(dst);
         }
-
         break;
       
       default:
         break;
     }//end of switch statement
-
-printf("ending ");print_state(dst);
-
   }//end of while loop
   return;
 }
@@ -818,7 +671,6 @@ void teardown(cmu_socket_t * dst){
       if(check_for_data(dst, TIMEOUT, current_timeout) != EXIT_SUCCESS)//what to do if timeout here? current answer: resend FIN
       {
         send_FIN(dst);
-printf("backend.c: teardown(): resent FIN\n");
       }else
       {
         if(dst->state == LAST_ACK)
@@ -896,7 +748,6 @@ void update_sending_buffer(char **sending_buffer_addr, cmu_socket_t *sock){
     sock->window.last_byte_acked = buf_to_send;
     sock->window.last_byte_sent = buf_to_send;
     sock->window.last_byte_written = buf_to_send + data_copied;
-printf("update_sending_buffer: data_copied is: %lu\n", data_copied);
     update_socket_buffer(sock, data_copied);
 
   }else
@@ -944,68 +795,13 @@ printf("update_sending_buffer: on exit, sending buf addr is: %lx\n", (unsigned l
 // send data in segments until there is a full window of bytes in flight
 // returns the first seq number it sents or NO_DATA_SENT (0) if no data was sent
 uint32_t my_send(cmu_socket_t *sock, char *sending_buffer){
-  // while(sock->window.last_byte_acked != sock->window.last_byte_written){
-    // switch(sock->window.transmission_state){
-    //   case SLOW_START:
-    //     if(sock->window.cwnd >= WINDOW_INITIAL_SSTHRESH)
-    //     {
-    //       sock->window.transmission_state = CONGESTION_AVOIDANCE;
-    //       continue;
-    //     }
-    //     send_full_real_window(sock, sending_buffer);
-
-    //     break;
-
-    //   case CONGESTION_AVOIDANCE:
-    //     break;
-
-    //   case FAST_RECOVERY:
-    //     break;
-    // }
-    
-  //}
   //if nothing to send, just return
   if(sending_buffer == NULL)
     return NO_DATA_SENT;
-  
-    
-// //if triple-ack exist, resend first packet in window
-//   if(sock->window.dup_ACK_count >= 3){
-// printf("my_send(): triple ack detected. resending...\n");
-//     resend_LBA_packet(sock);
-//     sock->window.dup_ACK_count = 0;
-//     return NO_DATA_SENT;
-//   }
-  
 
   //if sent everything already, just return
   if(sock->window.last_byte_sent == sock->window.last_byte_written)
     return NO_DATA_SENT;
-  
-
-  // // if adv_window is 0, send probing pkt and return
-  // if(sock->window.advertised_window == 0){
-  //   uint32_t seq;
-  //   char *offset_1B;
-  //   if(sock->window.window_probing_state == false){
-  //     seq = ((uint32_t)(sock->window.last_byte_sent - sock->window.last_byte_acked)) + sock->window.last_ack_received;
-  //     offset_1B = sock->window.last_byte_sent;
-  //     send_1B_data(sock, offset_1B, seq);
-  //     // update window info and the probing pkt content
-  //     sock->window.probing_pkt.seq = seq;
-  //     sock->window.probing_pkt.probing_byte = offset_1B;
-  //     sock->window.last_byte_sent++;
-  //     sock->window.window_probing_state = true;
-  //   }else
-  //   {
-  //     send_1B_data(sock, sock->window.probing_pkt.probing_byte, sock->window.probing_pkt.seq);
-  //   }
-  //   return sock->window.probing_pkt.seq;
-  // }else
-  // {
-  //   sock->window.window_probing_state = false;
-  // }
-
   
   return send_full_real_window(sock);
 }
@@ -1048,14 +844,6 @@ uint32_t send_full_real_window(cmu_socket_t *sock){
     effective_window = maxwindow - (size_t)(sock->window.last_byte_sent - LBA);// need to bring max_cwnd to the equation
   }
 
-  // if((size_t)sock->window.advertised_window < (size_t)(sock->window.last_byte_sent - LBA))
-  // {
-  //   effective_window = 0;
-  // }else
-  // {
-  //   effective_window = sock->window.advertised_window - (size_t)(sock->window.last_byte_sent - LBA);// need to bring max_cwnd to the equation
-  // }
-  
 printf("send_full_read_window: current effective window is: %lu, data in flight is %lu\n", effective_window, (size_t)(sock->window.last_byte_sent - sock->window.last_byte_acked));
   first_seq_sent = (sock->window.last_byte_sent - LBA) + sock->window.last_ack_received;
   data_len_to_send = my_min((size_t)(LBW - sock->window.last_byte_sent), effective_window);
@@ -1080,7 +868,6 @@ printf("send_full_read_window: current effective window is: %lu, data in flight 
     data_len_to_send -= data_sent_this_turn;
    
     sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
-printf("send_full_real_window: sent a data pkt with length %lu\n", data_sent_this_turn);
     // free msg
     free(msg);
     msg = NULL;
@@ -1238,17 +1025,16 @@ void* begin_backend(void * in){
   int detected_zero_adv = 0;
 
   srand(time(NULL));
-  print_state(dst);
+  print_state(dst);//debug purpose
 
-
-  handshake(dst);                                 //HJadded: execute handshake process, which loops until ESTABLISHED state is reached
+  handshake(dst);                                 
   while(TRUE){
     while(pthread_mutex_lock(&(dst->death_lock)) !=  0);
     death = dst->dying;
     pthread_mutex_unlock(&(dst->death_lock));
     
 
-    if(death && dst->application_sending_len == 0){                  //HJadded: when this condition is reached, execute teardown() until CLOSED state is reached
+    if(death && dst->application_sending_len == 0){                  
       teardown(dst);
       break;
     }
@@ -1302,7 +1088,7 @@ void* begin_backend(void * in){
       }
       check_for_data(dst, TIMEOUT, temp_timeout - used_time);
       cc_helper(dst);
-      printf("transmission_state is(0:SLOW_START, 1:CONGESTION_AVOIDANCE, 2:FAST_RECOVERY ): %i, window.dup_ACK_count is %i, dst->window.cwnd is %u\n", dst->window.transmission_state, dst->window.dup_ACK_count, dst->window.cwnd);
+print_transmission_state(dst);printf("window.dup_ACK_count is %i, dst->window.cwnd is %u\n", dst->window.dup_ACK_count, dst->window.cwnd);
       if(dst->recv_flag == TIMEOUTED){
       //if(check_for_data(dst, TIMEOUT, current_timeout) == EXIT_TIMEOUT){
         
@@ -1348,7 +1134,7 @@ void* begin_backend(void * in){
           }
 
 
-        
+
         } else {// if ack is not received (last_ack_received still <= seq_this_round)
           //measure cur time related to start of transmition and calculate used time
           gettimeofday(&cur, NULL);
@@ -1366,14 +1152,9 @@ void* begin_backend(void * in){
             used_time = 0.0;
             printf("(2)retransmit_cnt is: %i, temp_timeout is %f\n", retransmit_cnt,temp_timeout);
           }
-  
-        }
-  
+        }  
       }
-
-// printf("\nbackend(): check for data finished. the recv buffer now has: %s\n", dst->received_buf);
-// printf("backend(): the LBA is %lx, the LBS is %lx\n", (unsigned long) dst->window.last_byte_acked, (unsigned long)dst->window.last_byte_sent);
-    }
+   }
     //clean up after after sending
     free(data);
     data = NULL;
@@ -1511,6 +1292,151 @@ void cc_helper(cmu_socket_t * sock){
       }
       break;//transmission_state break
   }
+}
+
+// send a SYN packet: rand() an ISN and writes it to socket
+void send_SYN(cmu_socket_t * dst){                                             
+  uint32_t ISN;
+  char *rsp;
+  ISN = rand() % SEQMAX;
+  dst->ISN = ISN;
+  while(pthread_mutex_lock(&(dst->window.ack_lock)) != 0);
+  dst->window.last_ack_received = ISN;
+  pthread_mutex_unlock(&(dst->window.ack_lock));
+  rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), ISN, 0, 
+    DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, SYN_FLAG_MASK, MAX_NETWORK_BUFFER, 0, NULL, NULL, 0);
+  sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
+    &(dst->conn), sizeof(dst->conn));
+  free(rsp);
+  return;
+}
+
+// resend a SYN packet: reads the ISN on socket
+void resend_SYN(cmu_socket_t * dst){                                             
+  char *rsp;
+  rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), dst->ISN, 0, 
+    DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, SYN_FLAG_MASK, MAX_NETWORK_BUFFER, 0, NULL, NULL, 0);
+  sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
+    &(dst->conn), sizeof(dst->conn));
+  free(rsp);
+  return;
+}
+
+// send an ACK packet: reads from the socket's window
+void send_ACK(cmu_socket_t * dst){                                           
+  char *rsp;
+  rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), 
+  dst->window.last_ack_received, dst->window.last_seq_received + 1, 
+  DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, ACK_FLAG_MASK, dst->window.my_window_to_advertise, 0, NULL, NULL, 0);
+  sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
+    &(dst->conn), sizeof(dst->conn));
+  free(rsp);
+  return;
+}
 
 
+// only used by listener when in SYN_RECVD state and failed to receive ack of SYN|ACK
+// it reads from socket's window
+void resend_SYNACK(cmu_socket_t * sock){                                         
+  char* rsp;
+  uint32_t seq, ack;                                                  
+  socklen_t conn_len = sizeof(sock->conn);
+  seq = sock->ISN;
+  ack = sock->window.last_seq_received  + 1;
+  rsp = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, ack, 
+    DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, SYN_FLAG_MASK|ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, NULL, 0);
+  sendto(sock->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
+    &(sock->conn), conn_len);
+  free(rsp);
+  sock->state = SYN_RECVD;
+}
+
+// send a FIN|ACK packet, writes the FSN to socket's window
+void send_FIN(cmu_socket_t * dst){                                           
+  char *rsp;
+  while(pthread_mutex_lock(&(dst->window.ack_lock)) != 0);
+  dst->FSN = dst->window.last_ack_received;
+  pthread_mutex_unlock(&(dst->window.ack_lock));
+  rsp = create_packet_buf(dst->my_port, ntohs(dst->conn.sin_port), 
+  dst->FSN, dst->window.last_seq_received + 1, 
+  DEFAULT_HEADER_LEN, DEFAULT_HEADER_LEN, FIN_FLAG_MASK|ACK_FLAG_MASK, dst->window.my_window_to_advertise, 0, NULL, NULL, 0);
+  sendto(dst->socket, rsp, DEFAULT_HEADER_LEN, 0, (struct sockaddr*) 
+    &(dst->conn), sizeof(dst->conn));
+  free(rsp);
+  return;
+}
+
+/*
+ * Param: sock - The socket to check for acknowledgements. 
+ * Param: seq - Sequence number to check 
+ *
+ * Purpose: To tell if a packet (sequence number) has been acknowledged.
+ *
+ */
+int check_ack(cmu_socket_t * sock, uint32_t seq){
+  int result;
+  while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
+  if(sock->window.last_ack_received > seq)
+    result = TRUE;
+  else
+    result = FALSE;
+  pthread_mutex_unlock(&(sock->window.ack_lock));
+  return result;
+}
+
+// debug function
+void print_state(cmu_socket_t *dst){
+  switch(dst->state){
+    case CLOSED:
+      printf("state: CLOSED\n");
+      break;
+    case LISTEN:
+      printf("state: LISTEN\n");
+      break;
+    case SYN_SENT:
+      printf("state: SYN_SENT\n");
+      break;
+    case SYN_RECVD:
+      printf("state: SYN_RECVD\n");
+      break;
+    case ESTABLISHED:
+      printf("state: ESTABLISHED\n");
+      break;
+    case FIN_WAIT_1:
+      printf("state: FIN_WAIT_1\n");
+      break;
+    case FIN_WAIT_2:
+      //printf("state: FIN_WAIT_2\n");
+      break;
+    case CLOSING:
+      printf("state: CLOSING\n");
+      break;
+    case TIME_WAIT:
+      printf("state: TIME_WAIT\n");
+      break;
+    case CLOSE_WAIT:
+      printf("state: CLOSE_WAIT\n");
+      break;
+    case LAST_ACK:
+      printf("state: LAST_ACK\n");
+      break;
+  }
+}
+
+
+// debug function
+void print_transmission_state(cmu_socket_t *dst){
+  printf("transmission state is: ");
+  switch (dst->window.transmission_state)
+  {
+  case SLOW_START:
+    printf("SLOW_START ");
+    break;
+  case CONGESTION_AVOIDANCE:
+    printf("CONGESTION_AVOIDANCE ");
+    break;
+  case FAST_RECOVERY:
+    printf("FAST_RECOVERY ");
+    break;
+  }
 }
