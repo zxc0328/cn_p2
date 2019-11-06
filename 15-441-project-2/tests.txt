@@ -1,1 +1,13 @@
-Describe you tests here
+This file describes the tests in /tests folder.
+tests/			- all tests for Project 2
+	test1/		- files needed to test a file transmission
+		README.txt	- instructions to run test1
+		server.c	- source code for server
+		client.c	- source code for client
+		cX.sh		- script to set the environment
+		run.sh		- script to start on the server side:
+					start packet capture, then launches server, after
+					file transmission completes, analyze the pcap and
+					store the parse information in analysis.txt
+		longfile.txt	- the 80KB file being transmitted
+		
