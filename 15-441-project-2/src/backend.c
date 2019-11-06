@@ -7,7 +7,7 @@
 
 // initial  value
 double EstimatedRTT = INIT_RTT; // set init EstimatedRTT
-double current_timeout = 0.33;//INIT_TIMEOUT;// set inital timeout value
+double current_timeout = 1;//INIT_TIMEOUT;// set inital timeout value
 
 // debug: debugging function to print current state of a socket(body in backend.c)
 void print_state(cmu_socket_t *dst);
@@ -342,15 +342,43 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       // update adv_window
       sock->window.advertised_window = get_advertised_window(pkt);
 
-      // if in data trasmission, received dup ACK, update dup count and break
-      if(sock->state == ESTABLISHED && get_plen(pkt) == get_hlen(pkt)){
-        if(get_ack(pkt) == sock->window.last_ack_received){
-          sock->window.dup_ACK_count++;
-          break;
-        }else
-        {
-          sock->window.dup_ACK_count = 0;
-        }  
+      // // if in data trasmission, received dup ACK, update dup count and break
+      // if(sock->state == ESTABLISHED && get_plen(pkt) == get_hlen(pkt)){
+      //   if(get_ack(pkt) == sock->window.last_ack_received){
+      //     sock->window.dup_ACK_count++;
+      //     break;
+      //   }else
+      //   {
+      //     sock->window.dup_ACK_count = 0;
+      //   }  
+      // }
+            // if in data trasmission or close wait: 
+      if((sock->state == ESTABLISHED || sock->state == CLOSE_WAIT)){
+        
+        // if pure ack
+        if (get_plen(pkt) == get_hlen(pkt)){
+
+          // if dup ack
+          if(get_ack(pkt) == sock->window.last_ack_received){
+            sock->window.dup_ACK_count++;
+            sock->recv_flag = DUP_ACK;// for cc
+            break;
+          }else { // if new ack
+            sock->window.dup_ACK_count = 0;
+            sock->recv_flag = NEW_ACK;// for cc
+          }
+
+        // if not pure ack (data + ack)
+        } else {
+          
+          // if new ack
+          if(get_ack(pkt) > sock->window.last_ack_received){
+            sock->window.dup_ACK_count = 0;
+            sock->recv_flag = NEW_ACK;// for cc
+          }
+
+        }
+
       }
 
       // first: update lack byte acked
@@ -362,7 +390,7 @@ void handle_message(cmu_socket_t * sock, char* pkt){
       while(pthread_mutex_lock(&(sock->window.ack_lock)) != 0);
       sock->window.last_ack_received = get_ack(pkt);
       pthread_mutex_unlock(&(sock->window.ack_lock));
-      
+      sock->recv_flag = NEW_ACK;// for cc
 
       //case: this is just an ACK
       if(get_plen(pkt) == get_hlen(pkt)){
@@ -508,9 +536,11 @@ int check_for_data(cmu_socket_t * sock, int flags, double timeout_value){       
       FD_SET(sock->socket, &ackFD);
       if(select(sock->socket+1, &ackFD, NULL, NULL, &time_out) <= 0){
         pthread_mutex_unlock(&(sock->recv_lock));
+        sock->recv_flag = TIMEOUTED;//for cc
         return EXIT_TIMEOUT;
       }
     case NO_WAIT:
+
       len = recvfrom(sock->socket, hdr, DEFAULT_HEADER_LEN, MSG_DONTWAIT | MSG_PEEK,
                (struct sockaddr *) &(sock->conn), &conn_len);
       break;
@@ -518,6 +548,7 @@ int check_for_data(cmu_socket_t * sock, int flags, double timeout_value){       
       perror("ERROR unknown flag");
       return EXIT_ERROR;
   }
+
   if(len >= DEFAULT_HEADER_LEN){
     plen = get_plen(hdr);
     pkt = malloc(plen);
@@ -684,7 +715,7 @@ void print_state(cmu_socket_t *dst){
       printf("state: FIN_WAIT_1\n");
       break;
     case FIN_WAIT_2:
-      printf("state: FIN_WAIT_2\n");
+      //printf("state: FIN_WAIT_2\n");
       break;
     case CLOSING:
       printf("state: CLOSING\n");
@@ -989,7 +1020,6 @@ void send_1B_data(cmu_socket_t *sock, char* data_1B, uint32_t seq){
   msg = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, sock->window.last_seq_received + 1, 
         DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, data_1B, 1);
   sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
-hexDump("send_1B_data(): sent prob pkt:", msg + DEFAULT_HEADER_LEN, 1);
   // free msg
   free(msg);
   msg = NULL;
@@ -1002,17 +1032,30 @@ uint32_t send_full_real_window(cmu_socket_t *sock){
   char* msg;
   char *LBA = sock->window.last_byte_acked, *LBW = sock->window.last_byte_written;
   int sockfd, plen;
-  size_t effective_window, data_len_to_send, conn_len = sizeof(sock->conn);
+  size_t effective_window, data_len_to_send, conn_len = sizeof(sock->conn), maxwindow;
   uint32_t seq, first_seq_sent;
 
   sockfd = sock->socket;
-  if((size_t)sock->window.advertised_window < (size_t)(sock->window.last_byte_sent - LBA))
+  
+  //for cc
+  maxwindow = my_min((size_t)sock->window.cwnd, (size_t)sock->window.advertised_window);
+
+  if( maxwindow < (size_t)(sock->window.last_byte_sent - LBA))
   {
     effective_window = 0;
   }else
   {
-    effective_window = sock->window.advertised_window - (size_t)(sock->window.last_byte_sent - LBA);// need to bring max_cwnd to the equation
+    effective_window = maxwindow - (size_t)(sock->window.last_byte_sent - LBA);// need to bring max_cwnd to the equation
   }
+
+  // if((size_t)sock->window.advertised_window < (size_t)(sock->window.last_byte_sent - LBA))
+  // {
+  //   effective_window = 0;
+  // }else
+  // {
+  //   effective_window = sock->window.advertised_window - (size_t)(sock->window.last_byte_sent - LBA);// need to bring max_cwnd to the equation
+  // }
+  
 printf("send_full_read_window: current effective window is: %lu, data in flight is %lu\n", effective_window, (size_t)(sock->window.last_byte_sent - sock->window.last_byte_acked));
   first_seq_sent = (sock->window.last_byte_sent - LBA) + sock->window.last_ack_received;
   data_len_to_send = my_min((size_t)(LBW - sock->window.last_byte_sent), effective_window);
@@ -1035,7 +1078,7 @@ printf("send_full_read_window: current effective window is: %lu, data in flight 
     // update LBS in window_t, and remaining data to be sent for this func call
     sock->window.last_byte_sent += data_sent_this_turn;
     data_len_to_send -= data_sent_this_turn;
-hexDump("send_full_real_window(): sent a normal data pkt", msg+DEFAULT_HEADER_LEN, MAX_DLEN);    
+   
     sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
 printf("send_full_real_window: sent a data pkt with length %lu\n", data_sent_this_turn);
     // free msg
@@ -1060,10 +1103,11 @@ void resend_LBA_packet(cmu_socket_t * sock){
   seq = sock->window.last_ack_received;
   len_to_send = my_min(MAX_DLEN, (size_t)(LBS-LBA));
   plen = DEFAULT_HEADER_LEN + len_to_send;
+  printf("resend seq is :%u\n",seq);
+  printf("(size: %lu) \n", len_to_send);
   msg = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, sock->window.last_seq_received + 1, 
   DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, LBA, len_to_send);
   sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
-hexDump("resend_LBA_packet(): resent a pkt, content is", msg+DEFAULT_HEADER_LEN, len_to_send);
   free(msg);
   msg = NULL;
 }
@@ -1106,7 +1150,7 @@ int check_for_zero_adv_window(cmu_socket_t *sock){
  *  the other side. 
  *
  */
-void* begin_backend(void * in){
+void* begin_backend_old(void * in){
   cmu_socket_t * dst = (cmu_socket_t *) in;
   int death, send_signal;
   char* data;
@@ -1166,4 +1210,307 @@ void* begin_backend(void * in){
   }
   pthread_exit(NULL); 
   return NULL; 
+}
+
+
+/*
+ * Param: in - the socket that is used for backend processing
+ *
+ * Purpose: To poll in the background for sending and receiving data to
+ *  the other side. 
+ *
+ */
+void* begin_backend(void * in){
+  cmu_socket_t * dst = (cmu_socket_t *) in;
+  int death, send_signal;
+  char* data;
+  
+  int flag = 0; //if flag =1, there is a timer, if flag = 0, no timer
+  int retransmit_cnt = 0;
+  uint32_t seq_this_round;
+  // set var to calculate RTT
+  double SampleRTT;
+  struct timeval start, end, cur;
+  //set var for timeout operation
+  double temp_timeout;
+  double used_time;
+  uint32_t first_seq_sent=0;// seq number returned by my_send
+  int detected_zero_adv = 0;
+
+  srand(time(NULL));
+  print_state(dst);
+
+
+  handshake(dst);                                 //HJadded: execute handshake process, which loops until ESTABLISHED state is reached
+  while(TRUE){
+    while(pthread_mutex_lock(&(dst->death_lock)) !=  0);
+    death = dst->dying;
+    pthread_mutex_unlock(&(dst->death_lock));
+    
+
+    if(death && dst->application_sending_len == 0){                  //HJadded: when this condition is reached, execute teardown() until CLOSED state is reached
+      teardown(dst);
+      break;
+    }
+    
+    //prepare the sending buffer
+    while(pthread_mutex_lock(&(dst->send_lock)) != 0);
+    update_sending_buffer(&data, dst);
+    pthread_mutex_unlock(&(dst->send_lock));
+    //send and wait for ack of all data in sending byte
+    
+    //init timer and retransmit_cnt
+    flag = 0;
+    retransmit_cnt = 0;
+    first_seq_sent = 0;
+
+    // while there is written bytes which need sent and acked
+    while(dst->window.last_byte_acked != dst->window.last_byte_written){    
+
+
+
+      // check_for_duo_ack and zero adv window
+      //check_for_dup_ack(dst);// move to cc_helper()
+      detected_zero_adv = check_for_zero_adv_window(dst);
+      
+      // if we encountered zero adv window, clear timer to prevent error count and error timeout
+      if (detected_zero_adv == ZERO_ADV_WIND_DETECTED){
+        flag=0;
+        retransmit_cnt = 0;
+        gettimeofday(&start, NULL);
+        used_time = 0.0;
+
+      }
+
+      // get the first seq that my_send() send
+      first_seq_sent = my_send(dst, data);
+
+
+
+      // set timer if no timer and there is data sent ( flag is 0 => no timer)
+      if ( flag==0 && first_seq_sent != NO_DATA_SENT){
+        // count retransmit time for Karn/Partridge Algorithm
+        retransmit_cnt = 0;
+        // set current packet start timer to measure RTT and to check if timeout happen 
+        gettimeofday(&start, NULL);
+        // set temp_timeout for first transmition (temp_timeout is timeout for current transmition)
+        temp_timeout = current_timeout;
+        used_time = 0.0;
+        flag = 1; // set a timer
+        seq_this_round = first_seq_sent;
+
+      }
+      check_for_data(dst, TIMEOUT, temp_timeout - used_time);
+      cc_helper(dst);
+      printf("transmission_state is(0:SLOW_START, 1:CONGESTION_AVOIDANCE, 2:FAST_RECOVERY ): %i, window.dup_ACK_count is %i, dst->window.cwnd is %u\n", dst->window.transmission_state, dst->window.dup_ACK_count, dst->window.cwnd);
+      if(dst->recv_flag == TIMEOUTED){
+      //if(check_for_data(dst, TIMEOUT, current_timeout) == EXIT_TIMEOUT){
+        
+        // because of timeouted, retransmition and  update var
+        //resend_LBA_packet(dst); // move to cc_helper()
+
+        retransmit_cnt+=1;
+        gettimeofday(&start, NULL);
+        // Karn  Algorithm
+        current_timeout = current_timeout*2;///// testing
+
+        temp_timeout = current_timeout;
+        used_time = 0.0;
+        //flag = 0; //remove the timer
+        printf("retransmit_cnt is: %i, temp_timeout is %f, seq_this_round is %u, first_seq_sent is %u\n", retransmit_cnt,temp_timeout, seq_this_round, first_seq_sent);
+        //printf("window.last_byte_acked is %s, dst->window.last_byte_written is %s\n", dst->window.last_byte_acked, dst->window.last_byte_written);
+        //printf("window.last_ack_received is %u\n", dst->window.last_ack_received);
+      } else { // not timeouted, get a packet, so check if last_ack_received > seq_this_round ( packet get acked)
+        //printf("seq_this_round is: %u, seq_this_round is %u\n", seq_this_round,seq_this_round);
+        // check ack, if last_ack_received > seq_this_round, it means data is acked
+        if(check_ack(dst, seq_this_round)){
+          // if there is no retrainsmition and timer exist, update EstimatedRTT and timeout
+          if (retransmit_cnt==0 && flag == 1){
+            //set current packet end timer
+            gettimeofday(&end, NULL);
+            SampleRTT = diff(start, end);
+            printf("RTT is: %f for current packet.\n", SampleRTT);
+  
+            // for the first EstimatedRTT update, set EstimatedRTT = SampleRTT 
+            if (EstimatedRTT==0.0){ 
+              EstimatedRTT = SampleRTT;
+            } else {
+              EstimatedRTT = 0.9*EstimatedRTT+ 0.1*SampleRTT;
+            }
+            
+            current_timeout = EstimatedRTT*2.0;
+            printf("EstimatedRTT is: %f for current packet.\n", EstimatedRTT);
+            printf("current_timeout is: %f.\n", current_timeout);
+            flag = 0; //  if finish this round, remove the timer  
+          } else {
+            // if data is acked and there is a retrainsmition, dont update RTT but still remove timer
+            flag = 0 ; 
+          }
+
+
+        
+        } else {// if ack is not received (last_ack_received still <= seq_this_round)
+          //measure cur time related to start of transmition and calculate used time
+          gettimeofday(&cur, NULL);
+          used_time = diff(start, cur);
+          // if timeouted
+          if (temp_timeout - used_time <= 0.0) {
+            //because of retransmition, update var
+            retransmit_cnt+=1;
+            gettimeofday(&start, NULL);
+  
+            // Karn  Algorithm
+            current_timeout = current_timeout*2;
+  
+            temp_timeout = current_timeout;
+            used_time = 0.0;
+            printf("(2)retransmit_cnt is: %i, temp_timeout is %f\n", retransmit_cnt,temp_timeout);
+          }
+  
+        }
+  
+      }
+
+// printf("\nbackend(): check for data finished. the recv buffer now has: %s\n", dst->received_buf);
+// printf("backend(): the LBA is %lx, the LBS is %lx\n", (unsigned long) dst->window.last_byte_acked, (unsigned long)dst->window.last_byte_sent);
+    }
+    //clean up after after sending
+    free(data);
+    data = NULL;
+    dst->window.last_byte_acked = NULL;
+    dst->window.last_byte_sent = NULL;
+    dst->window.last_byte_written = NULL;
+    
+    // check to received data
+    check_for_data(dst, NO_WAIT, current_timeout);
+
+    
+    while(pthread_mutex_lock(&(dst->recv_lock)) != 0);
+    
+    if(dst->received_len > 0)
+      send_signal = TRUE;
+    else
+      send_signal = FALSE;
+    pthread_mutex_unlock(&(dst->recv_lock));
+    
+    if(send_signal){
+      pthread_cond_signal(&(dst->wait_cond));  
+    }
+  }
+
+
+  pthread_exit(NULL); 
+  return NULL; 
+}
+
+
+// cc_helper: the helper function for all congestion control
+// input: need check_for_data() to set sock->window.dup_ACK_count and sock->recv_flag
+// output:
+// 1. update cwnd
+// 2. update ssthresh
+// 3. update dup_ack_count
+// 4. change state according to current stat and recv_flag
+// 5. retransmit missing segment if necessary
+void cc_helper(cmu_socket_t * sock){
+  int dup_ACK_count = sock->window.dup_ACK_count;// current dup ACK count from previous handle message
+  int recv_flag = sock->recv_flag; // current recv_flag from previous check_for_data (NEW_ACK, DUP_ACK, TIMEOUTED)
+  int current_transmission_state = sock->window.transmission_state; // current state in cogestion control
+
+  switch(current_transmission_state){ // use "current" transmission_state, since window.transmission_state might change in this function 
+    case SLOW_START:
+      // check recv flag
+      switch(recv_flag){
+        case NEW_ACK:
+          sock->window.cwnd = sock->window.cwnd + MAX_DLEN; // cwnd = cwnd +MSS
+          sock->window.dup_ACK_count = 0;
+          // transmit new segment as allowed
+          
+          // check current cwnd size and change state if necessary
+          // note this is put in new ACK case
+          if(sock->window.cwnd >= sock->window.ssthresh){
+            sock->window.transmission_state = CONGESTION_AVOIDANCE; // change state
+          }
+          break;
+
+        case DUP_ACK:
+          if (dup_ACK_count>=3){
+            sock->window.ssthresh = sock->window.cwnd/2;
+            sock->window.cwnd = sock->window.ssthresh + 3*MAX_DLEN;
+            resend_LBA_packet(sock);// retransmit missing segment
+            sock->window.transmission_state = FAST_RECOVERY; // change state
+          }
+          // }else{
+          //   //pass, dup_ACK_count already update in handle_message() 
+          // }
+          break;
+
+        case TIMEOUTED:
+          sock->window.ssthresh = sock->window.cwnd/2;
+          sock->window.cwnd = MAX_DLEN;
+          sock->window.dup_ACK_count = 0;
+          resend_LBA_packet(sock);// retransmit missing segment
+          break;
+      }
+
+      break;//transmission_state break
+
+    case CONGESTION_AVOIDANCE:
+      // check recv flag 
+      switch(recv_flag){
+        case NEW_ACK:
+          sock->window.cwnd = sock->window.cwnd +  ((MAX_DLEN *MAX_DLEN)*4/(sock->window.cwnd*5));
+          sock->window.dup_ACK_count = 0;
+          // transmit new segment as allowed
+          break;
+
+        case DUP_ACK:
+          if (dup_ACK_count>=3){
+            sock->window.ssthresh = sock->window.cwnd/2;
+            sock->window.cwnd = sock->window.ssthresh + 3*MAX_DLEN;
+            resend_LBA_packet(sock);// retransmit missing segment
+            sock->window.transmission_state = FAST_RECOVERY; // change state
+          }
+          // }else{
+          //   //pass, dup_ACK_count already update in handle_message() 
+          // }
+          break;
+
+        case TIMEOUTED:
+          sock->window.ssthresh = sock->window.cwnd/2;
+          sock->window.cwnd = MAX_DLEN;
+          sock->window.dup_ACK_count = 0;
+          resend_LBA_packet(sock);// retransmit missing segment
+          sock->window.transmission_state = SLOW_START; // change state
+          break;
+      }
+
+      break;//transmission_state break
+
+    case FAST_RECOVERY:
+      // check recv flag
+      switch(recv_flag){
+        case NEW_ACK:
+          sock->window.cwnd = sock->window.ssthresh;
+          sock->window.dup_ACK_count = 0;
+          sock->window.transmission_state = CONGESTION_AVOIDANCE; // change state
+          break;
+
+        case DUP_ACK:
+          sock->window.cwnd = sock->window.cwnd + MAX_DLEN;
+          // transmit new segment as allowed
+          break;
+
+        case TIMEOUTED:
+          sock->window.ssthresh = sock->window.cwnd/2;
+          sock->window.cwnd = MAX_DLEN;
+          sock->window.dup_ACK_count = 0;
+          resend_LBA_packet(sock);// retransmit missing segment
+          sock->window.transmission_state = SLOW_START; // change state
+          break;
+      }
+      break;//transmission_state break
+  }
+
+
 }

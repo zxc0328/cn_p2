@@ -103,6 +103,11 @@ int cmu_socket(cmu_socket_t * dst, int flag, int port, char * serverIP){
   dst->window.probing_pkt.seq = 0;
   dst->window.probing_pkt.probing_byte = NULL;
 
+  //init for cc
+  dst->window.cwnd = WINDOW_INITIAL_WINDOW_SIZE;
+  dst->window.ssthresh = WINDOW_INITIAL_SSTHRESH;
+
+
   if(pthread_cond_init(&dst->wait_cond, NULL) != 0){
     perror("ERROR condition variable not set\n");
     return EXIT_ERROR;
