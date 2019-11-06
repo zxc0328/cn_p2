@@ -16,6 +16,10 @@
 #define NO_WAIT 1
 #define TIMEOUT 2
 
+#define NEW_ACK 0
+#define DUP_ACK 1
+#define TIMEOUTED 2
+
 #define TRUE 1
 #define FALSE 0
 
@@ -61,6 +65,8 @@ typedef struct {
 	out_of_order_pkt *out_of_order_queue;
 	bool window_probing_state;
 	probing_pkt_t probing_pkt;
+	uint32_t cwnd;
+	uint32_t ssthresh;
 } window_t;
 
 typedef enum states{				//HJadded: enum states
@@ -102,6 +108,7 @@ typedef struct {
 	enum states state;					//HJadded: attribute state, ISN, FSN
 	uint32_t ISN;
 	uint32_t FSN;
+	int recv_flag;
 } cmu_socket_t;
 
 #endif
