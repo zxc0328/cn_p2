@@ -57,8 +57,8 @@ typedef struct {
 	char * last_byte_read;
 	char * next_byte_expected;
 	char * last_byte_received;
-	uint16_t advertised_window;
-	uint16_t my_window_to_advertise;
+	uint32_t advertised_window;
+	uint32_t my_window_to_advertise;
 	enum reno_states transmission_state; // should be inited to SLOW_START
 	int dup_ACK_count;
 	size_t recving_buf_begining_seq; //this is constantly updated. shows what seq number the first byte in recving buffer is
@@ -109,6 +109,7 @@ typedef struct {
 	uint32_t ISN;
 	uint32_t FSN;
 	int recv_flag;
+	struct timeval global_start;
 } cmu_socket_t;
 
 #endif

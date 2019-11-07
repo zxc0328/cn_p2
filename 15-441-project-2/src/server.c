@@ -10,7 +10,8 @@
 void functionality(cmu_socket_t  * sock){
     char buf[30000];
     FILE *fp;
-    int n;
+    int n, total = 0;
+    struct timeval start_timer, current_timer;
 
     // n = cmu_read(sock, buf, 200, NO_FLAG);
     // printf("R: %s\n", buf);
@@ -22,23 +23,16 @@ void functionality(cmu_socket_t  * sock){
     // cmu_write(sock, "hi there im server 2", 21);
     // sleep(5);
 
-
+    gettimeofday(&start_timer,NULL);
+    gettimeofday(&current_timer,NULL);
     fp = fopen("./test/file.c", "w+");
-    n = cmu_read(sock, buf, 30000, NO_FLAG);
-    fwrite(buf, 1, n, fp);
-printf("N: %d\n", n);
-    sleep(5);
-     n = cmu_read(sock, buf, 30000, NO_FLAG);
-     fwrite(buf, 1, n, fp);
-printf("N: %d\n", n);
-    sleep(5);
-     n = cmu_read(sock, buf, 30000, NO_FLAG);
-     fwrite(buf, 1, n, fp);
-printf("N: %d\n", n);
-    sleep(5);
-     n = cmu_read(sock, buf, 30000, NO_FLAG);
-     fwrite(buf, 1, n, fp);
-    printf("N: %d\n", n);
+    while(1){
+        n = cmu_read(sock, buf, 30000, NO_WAIT);
+        total += n;
+        fwrite(buf, 1, n, fp);
+        //gettimeofday(&current_timer,NULL);
+    }
+    return;
 }
 
 

@@ -214,7 +214,6 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
   int read_len = 0;
   //variable used to update receiving window
   size_t NBE_offset, seq_offset, LBRCVD_offset;
-printf("cmu_tcp.c: cmu_read(): reading...\n");
   if(length < 0){
     perror("ERROR negative length");
     return EXIT_ERROR;
@@ -241,7 +240,6 @@ printf("cmu_tcp.c: cmu_read(): reading...\n");
 
         memcpy(dst, sock->received_buf, read_len);
         seq_offset = (size_t) read_len;
-printf("old recv buf begin seq is %lu\n", sock->window.recving_buf_begining_seq);
         if(read_len == sock->received_len && sock->window.last_byte_received == sock->window.next_byte_expected){
           free(sock->received_buf);
             sock->received_buf = NULL;
@@ -269,7 +267,6 @@ printf("old recv buf begin seq is %lu\n", sock->window.recving_buf_begining_seq)
           sock->window.last_byte_received = new_buf + LBRCVD_offset - (size_t)read_len;
           sock->window.recving_buf_begining_seq += seq_offset;          
         }
-printf("new recv buf begin seq is %lu.\n", sock->window.recving_buf_begining_seq);
       }
       break;
     default:
