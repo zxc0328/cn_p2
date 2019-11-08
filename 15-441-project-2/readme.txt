@@ -1,14 +1,13 @@
 ###################################################################################
-# README - 15-641 Project 2							  #
-#										  #
+# README - 15-641 Project 2							 							  #
+#										  										  #
 # Description: this project implements the TCP interface with flow control and	  #
-#	       congestion control(Reno).					  #
-#										  #
-#										  #
-# Authors: Haodong Ji haodongj@andrew.cmu.edu					  #
-#	   Yun Chen Sheng yunchens@andrew.cmu.edu  				  #
-#										  #
-#										  #
+#	       congestion control(Banana).					  						  #
+#										  										  #
+#										  										  #
+# Authors: Haodong Ji haodongj@andrew.cmu.edu					 				  #
+#	   Yun Chen Sheng yunchens@andrew.cmu.edu  				 					  #
+#										  										  #
 ###################################################################################
 
 [TOC-1] Table of Contents

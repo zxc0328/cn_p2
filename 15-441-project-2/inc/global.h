@@ -6,7 +6,7 @@
 #define EXIT_SUCCESS 0
 #define EXIT_ERROR -1
 #define EXIT_FAILURE 1
-#define EXIT_TIMEOUT 2				//HJadded: EXIT_TIMEOUT = 2
+#define EXIT_TIMEOUT 2				
 
 #define SIZE32 4
 #define SIZE16 2
@@ -23,7 +23,7 @@
 #define TRUE 1
 #define FALSE 0
 
-#define SEQMAX 0xffffffff			//HJadded: max sequense number
+#define SEQMAX 0xffffffff			
 
 typedef struct out_of_order_pkt out_of_order_pkt;
 
@@ -41,6 +41,7 @@ struct out_of_order_pkt {
 	struct out_of_order_pkt *next;
 };
 
+// data struct to keep track of probing packet information
 typedef struct {
 	uint32_t seq;
 	char * probing_byte;
@@ -52,16 +53,22 @@ typedef struct {
 	uint32_t last_ack_received;
 	pthread_mutex_t ack_lock;
 	char * last_byte_acked;
-	char * last_byte_sent; // this actually points to next byte to be sent
+
+	// this actually points to next byte to be sent
+	char * last_byte_sent; 
+
 	char * last_byte_written;
 	char * last_byte_read;
 	char * next_byte_expected;
 	char * last_byte_received;
 	uint32_t advertised_window;
 	uint32_t my_window_to_advertise;
-	enum reno_states transmission_state; // should be inited to SLOW_START
+	enum reno_states transmission_state;
 	int dup_ACK_count;
-	size_t recving_buf_begining_seq; //this is constantly updated. shows what seq number the first byte in recving buffer is
+
+	//shows what seq number the first byte in recving buffer is
+	size_t recving_buf_begining_seq; 
+
 	out_of_order_pkt *out_of_order_queue;
 	bool window_probing_state;
 	probing_pkt_t probing_pkt;
@@ -69,7 +76,7 @@ typedef struct {
 	uint32_t ssthresh;
 } window_t;
 
-typedef enum states{				//HJadded: enum states
+typedef enum states{				
 	CLOSED,//0
     LISTEN,//1
     SYN_SENT,//2
@@ -82,9 +89,6 @@ typedef enum states{				//HJadded: enum states
 	CLOSE_WAIT,//9
 	LAST_ACK,//10
 }states;
-
-
-
 
 
 typedef struct {
@@ -105,11 +109,10 @@ typedef struct {
 	int dying;
 	pthread_mutex_t death_lock;
 	window_t window;
-	enum states state;					//HJadded: attribute state, ISN, FSN
-	uint32_t ISN;
-	uint32_t FSN;
-	int recv_flag;
-	struct timeval global_start;
+	enum states state;					
+	uint32_t ISN;// initial sequence number
+	uint32_t FSN;// final sequence number
+	int recv_flag;// flag used for congestion control algorithms
 } cmu_socket_t;
 
 #endif
