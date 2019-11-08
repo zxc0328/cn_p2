@@ -19,6 +19,7 @@ void send_FIN(cmu_socket_t * dst);
 void send_1B_data(cmu_socket_t *sock, char* data, uint32_t seq);
 uint32_t send_full_real_window(cmu_socket_t *sock);
 void resend_LBA_packet(cmu_socket_t * sock);
+void resend_current_ssthresh_data(cmu_socket_t *sock);
 void check_for_dup_ack(cmu_socket_t *sock);
 int check_for_zero_adv_window(cmu_socket_t *sock);
 
@@ -789,6 +790,41 @@ void resend_LBA_packet(cmu_socket_t * sock){
   msg = NULL;
 }
 
+
+
+// resend the ssthresh amount of data in window (data from LBA)
+// only used when timeout happened
+void resend_current_ssthresh_data(cmu_socket_t * sock){
+  char *LBA, *LBS, *msg;
+  size_t len_to_send, data_len, len_sent = 0, conn_len = sizeof(sock->conn);
+  uint32_t seq;
+  int sockfd, plen;
+  sockfd = sock->socket;
+  LBA = sock->window.last_byte_acked;
+  LBS = sock->window.last_byte_sent;
+  //if all data is acked, just return;
+  if(LBA == LBS)
+    return;
+  // send updated ssthresh amount of data or half of LBS-LBA
+  //len_to_send = my_min(sock->window.ssthresh, (size_t)(LBS-LBA)/2);
+  len_to_send = (size_t)(LBS-LBA)/2;
+printf("resend_current_ssthresh_data: resending %lu bytes of data\n", len_to_send);
+  while(len_to_send != 0){
+    data_len = my_min(MAX_DLEN, len_to_send);
+    plen = data_len + DEFAULT_HEADER_LEN;
+    seq = sock->window.last_ack_received + len_sent;
+    msg = create_packet_buf(sock->my_port, ntohs(sock->conn.sin_port), seq, sock->window.last_seq_received + 1, 
+    DEFAULT_HEADER_LEN, plen, ACK_FLAG_MASK, sock->window.my_window_to_advertise, 0, NULL, LBA+len_sent, data_len);
+    sendto(sockfd, msg, plen, 0, (struct sockaddr*) &(sock->conn), conn_len);
+    free(msg);
+    msg = NULL;
+    len_sent += data_len;
+    len_to_send -= data_len;
+  }
+  
+  return;
+}
+
 // resends last segment of min(LBW-LBA or MAX_DLEN) because of DupAck
 void check_for_dup_ack(cmu_socket_t *sock){
   //if triple-ack exist, resend first packet in window
@@ -952,8 +988,6 @@ print_transmission_state(dst);printf("dst->window.cwnd is %u\n", dst->window.cwn
         used_time = 0.0;
         //flag = 0; //remove the timer
         printf("retransmit_cnt is: %i, temp_timeout is %f, seq_this_round is %u, first_seq_sent is %u\n", retransmit_cnt,temp_timeout, seq_this_round, first_seq_sent);
-        //printf("window.last_byte_acked is %s, dst->window.last_byte_written is %s\n", dst->window.last_byte_acked, dst->window.last_byte_written);
-        //printf("window.last_ack_received is %u\n", dst->window.last_ack_received);
       } else { // not timeouted, get a packet, so check if last_ack_received > seq_this_round ( packet get acked)
         printf("seq_this_round is: %u, seq_this_round is %u\n", seq_this_round,seq_this_round);
         // check ack, if last_ack_received > seq_this_round, it means data is acked
@@ -1088,7 +1122,7 @@ void cc_helper(cmu_socket_t * sock){
           if (dup_ACK_count>=3){
             sock->window.ssthresh = sock->window.cwnd/2;
             sock->window.cwnd = sock->window.ssthresh + 3*MAX_DLEN;
-            resend_LBA_packet(sock);// retransmit missing segment
+            resend_current_ssthresh_data(sock);// retransmit missing segment
             sock->window.transmission_state = FAST_RECOVERY; // change state
           }
           // }else{
@@ -1100,7 +1134,7 @@ void cc_helper(cmu_socket_t * sock){
           sock->window.ssthresh = sock->window.cwnd/2;
           sock->window.cwnd = MAX_DLEN;
           sock->window.dup_ACK_count = 0;
-          resend_LBA_packet(sock);// retransmit missing segment
+          resend_current_ssthresh_data(sock);// retransmit missing segment
           break;
       }
 
@@ -1131,7 +1165,7 @@ void cc_helper(cmu_socket_t * sock){
           sock->window.ssthresh = sock->window.cwnd/2;
           sock->window.cwnd = MAX_DLEN;
           sock->window.dup_ACK_count = 0;
-          resend_LBA_packet(sock);// retransmit missing segment
+          resend_current_ssthresh_data(sock);// retransmit missing segment
           sock->window.transmission_state = SLOW_START; // change state
           break;
       }
