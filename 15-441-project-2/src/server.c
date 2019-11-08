@@ -26,12 +26,15 @@ void functionality(cmu_socket_t  * sock){
     gettimeofday(&start_timer,NULL);
     gettimeofday(&current_timer,NULL);
     fp = fopen("./test/file.c", "w+");
-    while(1){
+    while(current_timer.tv_sec - start_timer.tv_sec < 120){
         n = cmu_read(sock, buf, 30000, NO_WAIT);
         total += n;
         fwrite(buf, 1, n, fp);
-        //gettimeofday(&current_timer,NULL);
+if(n!=0)
+    printf("server.c: wrote %d bytes to file.\n", n);
+        gettimeofday(&current_timer,NULL);
     }
+    fclose(fp);
     return;
 }
 

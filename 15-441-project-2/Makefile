@@ -9,10 +9,16 @@ OBJS = $(BUILD_DIR)/cmu_packet.o \
 	$(BUILD_DIR)/backend.o
 
 default:all
-all: server client
+all: receiver sender client server
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	$(CC) $(FLAGS) -c -o $@ $<
+
+receiver: $(OBJS)
+	$(CC) $(FLAGS) $(SRC_DIR)/receiver.c -o receiver $(OBJS)
+
+sender: $(OBJS)
+	$(CC) $(FLAGS) $(SRC_DIR)/sender.c -o sender $(OBJS)
 
 server: $(OBJS)
 	$(CC) $(FLAGS) $(SRC_DIR)/server.c -o server $(OBJS)
@@ -22,5 +28,5 @@ client: $(OBJS)
 
 
 clean:
-	-rm -f $(BUILD_DIR)/*.o peer client server
+	-rm -f $(BUILD_DIR)/*.o peer sender receiver client server
 test: all

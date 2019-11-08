@@ -221,17 +221,17 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
 
   while(pthread_mutex_lock(&(sock->recv_lock)) != 0);
 
-  //keep info about out pointers
-  NBE_offset = (size_t)(sock->window.next_byte_expected - sock->window.last_byte_read);
-  LBRCVD_offset = (size_t)(sock->window.last_byte_received - sock->window.last_byte_read);
-
-
   switch(flags){
     case NO_FLAG:
       while(sock->received_len == 0){
         pthread_cond_wait(&(sock->wait_cond), &(sock->recv_lock)); 
       }
     case NO_WAIT:
+      //keep info about out pointers
+      NBE_offset = (size_t)(sock->window.next_byte_expected - sock->window.last_byte_read);
+// printf("\ncalculated NBE_offset is %lu: NBE is %lx, LBR is %lx\n", NBE_offset, (size_t)sock->window.next_byte_expected, (size_t)sock->window.last_byte_read);
+      LBRCVD_offset = (size_t)(sock->window.last_byte_received - sock->window.last_byte_read);
+
       if(sock->received_len > 0){
         if(sock->received_len > length)
           read_len = length;
@@ -240,7 +240,7 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
 
         memcpy(dst, sock->received_buf, read_len);
         seq_offset = (size_t) read_len;
-        if(read_len == sock->received_len && sock->window.last_byte_received == sock->window.next_byte_expected){
+        if(read_len == sock->received_len && sock->window.last_byte_received == sock->window.next_byte_expected){// if read will clear out recv buffer
           free(sock->received_buf);
             sock->received_buf = NULL;
             sock->received_len = 0;
@@ -250,9 +250,11 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
             sock->window.next_byte_expected = NULL;
             sock->window.last_byte_received = NULL;
             sock->window.recving_buf_begining_seq += seq_offset;
+// printf("cmu_read cleared all recv data!\n");
         }
-        else{
+        else{ // else, update recv buffer by removing read data
            new_buf = calloc(sizeof(char), MAX_NETWORK_BUFFER);
+// printf("cmu_read: before updating recv buffer: readable data in buffer is %d, data read is %d. NBE is %lx, LBR is %lx\n",(int)(sock->window.next_byte_expected - sock->window.last_byte_read), read_len,(size_t)sock->window.next_byte_expected, (size_t)sock->window.last_byte_read);
            memcpy(new_buf, sock->received_buf + read_len, 
            (int)(sock->window.last_byte_received - sock->window.last_byte_read) - read_len);
 
@@ -260,12 +262,15 @@ int cmu_read(cmu_socket_t * sock, char* dst, int length, int flags){
            sock->received_buf = NULL;
            sock->received_len -= read_len;
            sock->received_buf = new_buf;
-
           //update pointers in window
           sock->window.last_byte_read = new_buf;
           sock->window.next_byte_expected = new_buf + NBE_offset - (size_t)read_len;
+// printf("updating: NBE_offset is %lu, NBE-LBR is %lu\n", NBE_offset, NBE_offset - (size_t)read_len);
           sock->window.last_byte_received = new_buf + LBRCVD_offset - (size_t)read_len;
-          sock->window.recving_buf_begining_seq += seq_offset;          
+          sock->window.recving_buf_begining_seq += seq_offset; 
+// printf("cmu_read: after updating recv buffer: readable data in buffer is %d, data read is %d\n",(int)(sock->window.next_byte_expected - sock->window.last_byte_read), read_len);
+
+//printf("cmu_read: has changed LBA to %lx\n", sock->window.last_byte_read);         
         }
       }
       break;
